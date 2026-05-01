@@ -1,0 +1,22 @@
+[package]
+name = "iratxo-engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+iratxo-core = { path = "../iratxo-core" }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
+
+[workspace]
+# standalone — built separately for wasm32 target

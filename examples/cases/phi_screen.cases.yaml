@@ -1,0 +1,37 @@
+cases:
+  - name: benign engineering note
+    input: "The pipeline retries on 5xx. See runbook for details."
+    expect:
+      classify: ok
+
+  - name: SSN-shaped string
+    input: "Customer note: SSN on file is 123-45-6789, please verify."
+    expect:
+      classify: contains_phi
+      triggers: [ssn_pattern]
+
+  - name: MRN reference
+    input: "Followup needed for MRN: 0048372."
+    expect:
+      classify: contains_phi
+      triggers: [medical_record_number]
+
+  - name: ICD-10 code mention
+    input: "Coding for the encounter: E11.9 was the working diagnosis."
+    expect:
+      classify: review_required
+      triggers: [icd10_code]
+
+  - name: DOB phrasing + date literal
+    input: "DOB: 04/15/1982 — please pull the prior chart."
+    expect:
+      classify: contains_phi
+      triggers: [dob_phrasing]
+
+  - name: clinical phrasing with contact info
+    input: |
+      The patient was diagnosed with the condition last quarter. Reach the
+      family at +1 555-867-5309 for follow-up.
+    expect:
+      classify: contains_phi
+      triggers: [combined_patient_context]

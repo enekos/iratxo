@@ -1,0 +1,61 @@
+name: phi_screen
+description: |
+  Pre-storage / pre-egress check for Protected Health Information. Tighter
+  than the generic PII pack: looks for US SSN-shaped strings, MRN-prefixed
+  identifiers, ICD-10 diagnosis codes, and date-of-birth phrasings that
+  commonly co-occur with patient records.
+
+rules:
+  - id: ssn_pattern
+    when:
+      regex: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+    classify: contains_phi
+    confidence: 0.95
+    explanation: "US Social Security Number pattern."
+
+  - id: medical_record_number
+    when:
+      any:
+        - regex: "(?i)\\bMRN[\\s:#]*\\d{5,10}\\b"
+        - regex: "(?i)\\b(patient|chart)\\s*(id|number)[\\s:#]*\\d{5,10}\\b"
+    classify: contains_phi
+    confidence: 0.9
+    explanation: "Medical record number / chart ID."
+
+  - id: icd10_code
+    when:
+      regex: "\\b[A-TV-Z][0-9][0-9A-Z](?:\\.[0-9A-Z]{1,4})?\\b"
+    classify: review_required
+    confidence: 0.5
+    explanation: "Possible ICD-10 diagnosis code — verify before persisting."
+
+  - id: dob_phrasing
+    when:
+      all:
+        - any:
+            - regex: "(?i)\\b(date of birth|d\\.?o\\.?b\\.?)\\b"
+            - contains_any: ["born on", "DOB:"]
+        - regex: "\\b(0?[1-9]|1[0-2])[/\\-](0?[1-9]|[12]\\d|3[01])[/\\-](19|20)\\d{2}\\b"
+    classify: contains_phi
+    confidence: 0.85
+    explanation: "Date-of-birth label adjacent to a date literal."
+
+  - id: combined_patient_context
+    when:
+      all:
+        - semantic_match:
+            examples:
+              - "the patient was diagnosed with the condition"
+              - "the patient is currently being treated for"
+            threshold: 0.3
+            language: "en"
+        - any:
+            - has_entity: { kind: phone, min_count: 1 }
+            - has_entity: { kind: email, min_count: 1 }
+    classify: contains_phi
+    confidence: 0.8
+    explanation: "Patient/diagnosis phrasing combined with personal contact info."
+
+default:
+  classify: ok
+  confidence: 1.0

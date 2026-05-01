@@ -1,0 +1,35 @@
+cases:
+  - name: legitimate internal mail
+    input: |
+      Hi team — the next sprint planning is at 10am.
+      Notes will be in https://docs.example.com/sprint-42.
+    expect:
+      classify: ok
+
+  - name: shouting subject alone is a soft flag
+    input: "URGENT ACTION REQUIRED IMMEDIATELY"
+    expect:
+      classify: review_required
+      triggers: [shouting_subject]
+
+  - name: external link with no allowlist match
+    input: |
+      Please review the attached invoice at https://invoice-portal.totally-real.biz/me
+    expect:
+      classify: review_required
+      triggers: [external_link_to_unknown_domain]
+
+  - name: urgency + credential prompt blocks outright
+    input: |
+      Your account will be suspended unless you act now.
+      Click here to confirm your password and keep your access.
+    expect:
+      classify: blocked
+      triggers: [urgency_credential_request]
+      confidence_min: 0.95
+
+  - name: lookalike domain substitution
+    input: "Sign in at https://www.paypa1.com/secure to verify your account."
+    expect:
+      classify: blocked
+      triggers: [lookalike_domain]

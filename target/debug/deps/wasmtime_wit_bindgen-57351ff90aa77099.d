@@ -1,0 +1,10 @@
+/Users/enekosarasola/iratxo/target/debug/deps/wasmtime_wit_bindgen-57351ff90aa77099.d: /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/lib.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/rust.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/source.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/types.rs
+
+/Users/enekosarasola/iratxo/target/debug/deps/libwasmtime_wit_bindgen-57351ff90aa77099.rlib: /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/lib.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/rust.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/source.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/types.rs
+
+/Users/enekosarasola/iratxo/target/debug/deps/libwasmtime_wit_bindgen-57351ff90aa77099.rmeta: /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/lib.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/rust.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/source.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/types.rs
+
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/lib.rs:
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/rust.rs:
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/source.rs:
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wit-bindgen-27.0.0/src/types.rs:

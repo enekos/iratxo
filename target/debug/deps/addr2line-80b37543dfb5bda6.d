@@ -1,0 +1,11 @@
+/Users/enekosarasola/iratxo/target/debug/deps/addr2line-80b37543dfb5bda6.d: /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/lib.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/frame.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/function.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/lazy.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/line.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/lookup.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/unit.rs
+
+/Users/enekosarasola/iratxo/target/debug/deps/libaddr2line-80b37543dfb5bda6.rmeta: /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/lib.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/frame.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/function.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/lazy.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/line.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/lookup.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/unit.rs
+
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/lib.rs:
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/frame.rs:
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/function.rs:
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/lazy.rs:
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/line.rs:
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/lookup.rs:
+/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/addr2line-0.24.2/src/unit.rs:

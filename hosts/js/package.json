@@ -1,0 +1,18 @@
+{
+  "name": "@iratxo/js",
+  "version": "0.1.0",
+  "description": "Iratxo wasm rule-engine host for browser, Node, and Cloudflare Workers.",
+  "type": "module",
+  "main": "src/node.js",
+  "exports": {
+    ".":          { "import": "./src/node.js" },
+    "./browser":  { "import": "./src/browser.js" },
+    "./workers":  { "import": "./src/workers.js" },
+    "./core":     { "import": "./src/core.js" }
+  },
+  "files": ["src", "wasm"],
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "license": "MIT OR Apache-2.0"
+}

@@ -1,0 +1,64 @@
+name: phishing_email
+description: |
+  Heuristic phishing detector for inbound email bodies. Combines urgency-cue
+  language, shouting subject patterns, and link-domain mismatch against an
+  allowlist. Tuned for a precision/recall tradeoff suited to "review queue"
+  routing — not auto-deletion.
+
+rules:
+  - id: external_link_to_unknown_domain
+    when:
+      all:
+        - has_entity: { kind: url, min_count: 1 }
+        - not:
+            has_url_to_domain:
+              domains:
+                - "example.com"
+                - "support.example.com"
+                - "stripe.com"
+                - "github.com"
+              allow_subdomains: true
+    classify: review_required
+    confidence: 0.7
+    explanation: "Links present, none point to an allowlisted domain."
+
+  - id: shouting_subject
+    when:
+      all:
+        - mostly_uppercase: { min_ratio: 0.6 }
+        - min_length: 3
+    classify: review_required
+    confidence: 0.6
+    explanation: "Shouting / all-caps phrasing — common in phishing subject lines."
+
+  - id: urgency_credential_request
+    when:
+      all:
+        - semantic_match:
+            examples:
+              - "your account will be suspended unless you act now"
+              - "verify your password immediately to keep your access"
+            threshold: 0.3
+            language: "en"
+        - any:
+            - contains_any:
+                - "click here"
+                - "verify now"
+                - "confirm your password"
+                - "update your billing"
+                - "log in to confirm"
+            - regex: "(?i)\\b(re-?enter|re-?submit)\\s+(your\\s+)?(password|credentials|details)\\b"
+    classify: blocked
+    confidence: 0.95
+    explanation: "Urgency language paired with a credential / billing prompt."
+
+  - id: lookalike_domain
+    when:
+      regex: "(?i)https?://[a-z0-9.\\-]*?(paypa1|m1crosoft|app1e|g00gle|amaz0n)\\.[a-z]{2,}"
+    classify: blocked
+    confidence: 0.99
+    explanation: "URL host contains a known lookalike substitution (1/0 swap)."
+
+default:
+  classify: ok
+  confidence: 1.0

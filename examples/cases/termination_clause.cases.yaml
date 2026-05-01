@@ -1,0 +1,31 @@
+cases:
+  - name: explicit Termination section
+    input: |
+      # Master Services Agreement
+
+      ## Termination
+      Either party may terminate this Agreement upon thirty (30) days written notice
+      to the other party. The terminating party shall pay all outstanding fees.
+    expect:
+      classify: contains_termination_clause
+      triggers: [termination_section_present]
+      confidence_min: 0.9
+
+  - name: termination phrasing + notice period (no heading)
+    input: |
+      This agreement may be ended by giving 14 days advance notice in writing
+      to the other party.
+    expect:
+      classify: contains_termination_clause
+      triggers: [termination_phrasing_present]
+
+  - name: ambiguous mention without notice clause
+    input: "We acknowledge this agreement can be ended at some point."
+    expect:
+      classify: needs_lawyer_review
+      triggers: [ambiguous_termination]
+
+  - name: unrelated commercial copy
+    input: "We offer the best customer service in the industry. Contact us today!"
+    expect:
+      classify: no_termination_clause_detected

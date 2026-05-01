@@ -1,0 +1,24 @@
+[package]
+name = "iratxo-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "iratxo"
+path = "src/main.rs"
+
+[dependencies]
+iratxo-core = { path = "../iratxo-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+anyhow = { workspace = true }
+wasmtime = "27"
+clap = { version = "4", features = ["derive"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = "3"

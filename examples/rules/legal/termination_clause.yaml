@@ -1,0 +1,46 @@
+name: legal_termination_clause
+description: |
+  Detect whether a contract excerpt contains a termination clause.
+  Triggered when (a) a "Termination" section heading is present, OR
+  (b) language semantically matches typical termination phrasings AND a
+  notice period is mentioned. Example domain pack — extend with org-specific
+  policy as needed.
+
+rules:
+  - id: termination_section_present
+    when:
+      has_section: ["Termination", "Cancellation", "Term and Termination"]
+    classify: contains_termination_clause
+    confidence: 0.95
+    explanation: "Section heading 'Termination' (or equivalent) found."
+
+  - id: termination_phrasing_present
+    when:
+      all:
+        - semantic_match:
+            examples:
+              - "Either party may terminate this agreement upon written notice"
+              - "This agreement may be ended by giving notice in writing"
+              - "Subject to the cancellation policy, either party may terminate"
+            threshold: 0.3
+            language: "en"
+        - any:
+          - regex: "(?i)\\b\\d+\\s*(day|week|month)s?\\s+(prior )?notice\\b"
+          - contains_any: ["written notice", "advance notice"]
+    classify: contains_termination_clause
+    confidence: 0.85
+    explanation: "Termination-style phrasing plus a notice-period reference."
+
+  - id: ambiguous_termination
+    when:
+      semantic_match:
+        examples: ["this agreement can be ended"]
+        threshold: 0.25
+        language: "en"
+    classify: needs_lawyer_review
+    confidence: 0.5
+    explanation: "Possible termination phrasing without clear notice clause."
+
+default:
+  classify: no_termination_clause_detected
+  confidence: 1.0

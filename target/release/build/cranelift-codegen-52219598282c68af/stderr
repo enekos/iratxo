@@ -1,0 +1,22 @@
+Writing generated file: /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/settings.rs
+Writing generated file: /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/types.rs
+Writing generated file: /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/opcodes.rs
+Writing generated file: /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/inst_builder.rs
+Writing generated file: /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/settings-arm64.rs
+Writing generated file: /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/clif_opt.isle
+Writing generated file: /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/clif_lower.isle
+Rebuilding /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_opt.rs
+Writing ISLE-generated Rust code to /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_opt.rs
+Rebuilding /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_x64.rs
+Writing ISLE-generated Rust code to /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_x64.rs
+Rebuilding /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_aarch64.rs
+Writing ISLE-generated Rust code to /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_aarch64.rs
+Rebuilding /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_s390x.rs
+Writing ISLE-generated Rust code to /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_s390x.rs
+Rebuilding /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_riscv64.rs
+Writing ISLE-generated Rust code to /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_riscv64.rs
+Rebuilding /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_pulley_shared.rs
+Writing ISLE-generated Rust code to /Users/enekosarasola/iratxo/target/release/build/cranelift-codegen-52219598282c68af/out/isle_pulley_shared.rs
+fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'

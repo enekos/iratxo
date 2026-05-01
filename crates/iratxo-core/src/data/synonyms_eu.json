@@ -1,0 +1,21 @@
+{
+  "_comment": "Per-language synonym dictionary (Basque). Smaller starter pack — Basque resources are scarcer; users will typically extend per-rule.",
+  "amaitu": ["bukatu", "akabatu", "etena", "etenarazi"],
+  "kontratu": ["hitzarmen", "ituna", "akordio"],
+  "itzultze": ["dirua_itzuli", "diruitzulketa"],
+  "berme": ["bermatu", "ziurtatu"],
+  "araudi": ["arau", "arautegi", "prozedura"],
+  "aholku": ["gomendio", "iradokizun"],
+  "finantza": ["dirudun", "ekonomiko"],
+  "mediku": ["osasun", "kliniko"],
+  "onartu": ["onarpen", "baimendu", "baieztatu"],
+  "sendatu": ["zaintza", "tratatu"],
+  "ordaindu": ["ordainketa", "kitatu"],
+  "erosi": ["eskuratu", "lortu"],
+  "erabiltzaile": ["bezero", "kontsumitzaile", "harpidedun"],
+  "datu": ["informazio", "erregistro"],
+  "ezabatu": ["ezeztatu", "kendu"],
+  "pribatu": ["konfidentzial", "pertsonal", "sentibera"],
+  "kexa": ["erreklamazio", "salaketa"],
+  "laguntza": ["sostengu", "zerbitzu"]
+}

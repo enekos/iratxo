@@ -1,0 +1,22 @@
+{
+  "_comment": "Maps canonical token -> list of synonyms/related terms. Tokenizer rewrites any synonym to its canonical form before hashing, so cosine similarity treats them as identical signals. Small on purpose; users can pass their own dictionary in semantic_match.",
+  "terminate": ["end", "cancel", "cancellation", "discontinue", "stop", "rescind", "annul"],
+  "agreement": ["contract", "deal", "arrangement", "pact", "accord"],
+  "notice": ["notification", "advisory", "warning", "alert"],
+  "refund": ["reimbursement", "repayment", "rebate", "money_back"],
+  "guarantee": ["guaranteed", "warranty", "assurance", "promise", "ensure"],
+  "policy": ["rule", "regulation", "guideline", "procedure"],
+  "advice": ["recommendation", "guidance", "counsel", "suggestion"],
+  "financial": ["monetary", "fiscal", "economic"],
+  "medical": ["health", "clinical", "therapeutic"],
+  "approve": ["approved", "endorse", "authorize", "authorized", "sanction", "accept"],
+  "cure": ["heal", "treat", "remedy", "fix"],
+  "pay": ["payment", "remit", "settle", "compensate"],
+  "buy": ["purchase", "acquire", "obtain"],
+  "user": ["customer", "client", "consumer", "subscriber", "member"],
+  "data": ["information", "records", "details"],
+  "delete": ["remove", "erase", "purge", "destroy"],
+  "private": ["confidential", "personal", "sensitive"],
+  "complaint": ["grievance", "issue", "concern", "issue_report"],
+  "support": ["help", "assistance", "service", "aid"]
+}

@@ -1,0 +1,21 @@
+{
+  "_comment": "Per-language synonym dictionary (Spanish). Same shape as synonyms.json: canonical -> [synonyms]. Stems differ between languages, so this lives in its own file rather than a multilingual map.",
+  "terminar": ["cancelar", "rescindir", "anular", "finalizar", "concluir", "dar_de_baja"],
+  "contrato": ["acuerdo", "convenio", "pacto", "trato"],
+  "reembolso": ["devolucion", "rembolso", "restitucion"],
+  "garantia": ["aseguramiento", "garantizado", "promesa"],
+  "politica": ["norma", "regla", "directriz", "procedimiento"],
+  "consejo": ["recomendacion", "asesoramiento", "orientacion", "sugerencia"],
+  "financiero": ["monetario", "fiscal", "economico"],
+  "medico": ["clinico", "terapeutico", "sanitario"],
+  "aprobar": ["aprobado", "autorizar", "autorizado", "homologar", "validar"],
+  "curar": ["sanar", "tratar", "remediar"],
+  "pagar": ["pago", "abonar", "remitir", "saldar"],
+  "comprar": ["adquirir", "obtener"],
+  "usuario": ["cliente", "consumidor", "suscriptor", "miembro"],
+  "datos": ["informacion", "registros"],
+  "borrar": ["eliminar", "suprimir", "destruir"],
+  "privado": ["confidencial", "personal", "sensible"],
+  "queja": ["reclamacion", "reclamo", "incidencia", "denuncia"],
+  "soporte": ["ayuda", "asistencia", "servicio", "apoyo"]
+}

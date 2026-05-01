@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Iratxo Rule Studio</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font: 14px/1.4 ui-sans-serif, system-ui, sans-serif; margin: 0; background: #1a1d24; color: #e2e6ee; }
+  header { padding: 12px 20px; border-bottom: 1px solid #2c313b; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .tag { font-size: 12px; color: #9aa3b3; background: #20242c; padding: 2px 8px; border-radius: 3px; }
+  #status { margin-left: auto; font-size: 12px; color: #9aa3b3; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #2c313b; height: calc(100vh - 49px); }
+  .col { display: flex; flex-direction: column; background: #1a1d24; }
+  .panel { flex: 1; display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid #2c313b; }
+  .panel:last-child { border-bottom: none; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: #9aa3b3; margin: 0; padding: 10px 16px; font-weight: 600; background: #16191f; }
+  textarea, pre { margin: 0; border: none; padding: 12px 16px; background: #14171c; color: #e2e6ee; font: 13px/1.5 ui-monospace, monospace; resize: none; outline: none; flex: 1; min-height: 0; overflow: auto; }
+  pre { white-space: pre-wrap; word-break: break-word; }
+  .verdict { display: inline-block; padding: 4px 10px; border-radius: 3px; font-weight: 600; font-size: 13px; }
+  .verdict.ok { background: #2d4a2d; color: #a3d9a3; }
+  .verdict.review { background: #4a4128; color: #e6c97a; }
+  .verdict.blocked { background: #4a2828; color: #e69a9a; }
+  .verdict.other { background: #2c313b; color: #cdd2dc; }
+  .triggered { margin-top: 12px; }
+  .trig { padding: 8px 10px; border-left: 3px solid #5a86d6; margin-bottom: 6px; background: #20242c; font-size: 13px; }
+  .trig .id { font-weight: 600; }
+  .trig .conf { color: #9aa3b3; margin-left: 8px; }
+  .trig .why { color: #b8c0cf; margin-top: 4px; font-style: italic; }
+  .err { color: #e69a9a; background: #2a1a1a; padding: 12px 16px; border-radius: 4px; font: 13px/1.5 ui-monospace, monospace; white-space: pre-wrap; }
+  .meta { color: #9aa3b3; font-size: 12px; margin-top: 8px; }
+  .empty { color: #5a6270; padding: 12px 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Iratxo Rule Studio</h1>
+  <span class="tag">author → compile → evaluate</span>
+  <span id="status">loading engine…</span>
+</header>
+<main>
+  <div class="col">
+    <div class="panel" style="flex: 1.6;">
+      <h2>Rule YAML</h2>
+      <textarea id="rule" spellcheck="false" placeholder="Write your rule pack here…"></textarea>
+    </div>
+    <div class="panel">
+      <h2>Input</h2>
+      <textarea id="input" spellcheck="false" placeholder="Paste text to classify…"></textarea>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel">
+      <h2>Result</h2>
+      <div id="output" style="padding: 12px 16px; overflow: auto; flex: 1;">
+        <div class="empty">Waiting for engine…</div>
+      </div>
+    </div>
+    <div class="panel" style="flex: 0.6;">
+      <h2>Raw JSON</h2>
+      <pre id="raw">{}</pre>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+  import { createFromModule } from "../hosts/js/src/core.js";
+
+  const status   = document.getElementById("status");
+  const ruleEl   = document.getElementById("rule");
+  const inputEl  = document.getElementById("input");
+  const output   = document.getElementById("output");
+  const raw      = document.getElementById("raw");
+
+  const STARTER_RULE = `name: my_first_pack
+description: A starter compliance pack.
+
+rules:
+  - id: forbidden_phrase
+    when:
+      contains_any:
+        - "guaranteed refund"
+        - "100% refund"
+    classify: review_required
+    confidence: 0.95
+    explanation: "Refund guarantee language detected."
+
+  - id: medical_claim
+    when:
+      regex: "\\\\b(FDA approved|guaranteed cure)\\\\b"
+    classify: blocked
+    confidence: 0.99
+    explanation: "Regulated medical claim detected."
+
+default:
+  classify: ok
+  confidence: 1.0`;
+
+  const STARTER_INPUT = "Sign up today for a guaranteed refund. Our product is FDA approved.";
+
+  ruleEl.value = STARTER_RULE;
+  inputEl.value = STARTER_INPUT;
+
+  let runner;
+  let lastGoodIr = null;
+
+  const module = await WebAssembly.compileStreaming(fetch("./iratxo_engine.wasm"));
+  runner = await createFromModule(module);
+  status.textContent = "engine ready · edits compile automatically";
+  evaluate();
+
+  let timer;
+  function schedule() {
+    clearTimeout(timer);
+    timer = setTimeout(evaluate, 180);
+  }
+
+  function classOf(c) {
+    if (c === "ok") return "ok";
+    if (c.startsWith("review") || c.includes("review")) return "review";
+    if (c.startsWith("block") || c === "needs_lawyer_review") return "blocked";
+    return "other";
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+  }
+
+  function renderError(msg) {
+    output.innerHTML = `<div class="err">${escapeHtml(msg)}</div>`;
+    raw.textContent = "";
+  }
+
+  function renderResult(r) {
+    let html = `<span class="verdict ${classOf(r.classification)}">${r.classification}</span>` +
+               ` <span class="meta">confidence ${r.confidence.toFixed(2)}</span>`;
+
+    if (r.triggered && r.triggered.length) {
+      html += `<div class="triggered">` +
+        r.triggered.map(t =>
+          `<div class="trig"><span class="id">${escapeHtml(t.id)}</span>` +
+          `<span class="conf">→ ${escapeHtml(t.classification)}, conf ${t.confidence.toFixed(2)}</span>` +
+          (t.explanation ? `<div class="why">${escapeHtml(t.explanation)}</div>` : "") +
+          `</div>`
+        ).join("") + `</div>`;
+    } else {
+      html += `<div class="meta" style="margin-top:12px">No rules triggered.</div>`;
+    }
+
+    if (r.explanations && r.explanations.length) {
+      html += `<div class="meta" style="margin-top:12px">Explanations: ` +
+              r.explanations.map(e => escapeHtml(e)).join("; ") + `</div>`;
+    }
+
+    output.innerHTML = html;
+    raw.textContent = JSON.stringify(r, null, 2);
+  }
+
+  function evaluate() {
+    if (!runner) return;
+    try {
+      const ir = runner.compile(ruleEl.value);
+      lastGoodIr = ir;
+      const r = runner.run(ir, inputEl.value);
+      renderResult(r);
+    } catch (e) {
+      renderError(e.message);
+    }
+  }
+
+  ruleEl.addEventListener("input", schedule);
+  inputEl.addEventListener("input", schedule);
+</script>
+</body>
+</html>

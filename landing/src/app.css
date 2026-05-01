@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+@theme {
+  --font-mono: "JetBrains Mono", monospace;
+  --font-sans: "Space Grotesk", sans-serif;
+}
+
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0b0a10;
+  color: #e6e6eb;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: #ff7a18;
+  color: #fff;
+}
+
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-18px); }
+  100% { transform: translateY(0px); }
+}
+
+.animate-float {
+  animation: float 8s ease-in-out infinite;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0b0a10;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2833;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #ff7a18;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #2a2833;
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #ff7a18;
+}
+
+.terminal-line {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  animation: typing 0.4s steps(40, end);
+}
+
+@media (max-width: 640px) {
+  .terminal-line {
+    white-space: normal;
+    word-break: break-word;
+  }
+}
+
+code {
+  word-break: break-word;
+}
+
+@keyframes typing {
+  from { max-width: 0 }
+  to { max-width: 100% }
+}
+
+.code-pre {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow-x: auto;
+  padding: 14px 16px;
+  background: #0a0910;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  color: #d6d6e1;
+  tab-size: 2;
+}
+
+.tok-key   { color: #c4a8ff; }
+.tok-str   { color: #ffae6e; }
+.tok-num   { color: #6ed8a8; }
+.tok-cmt   { color: #5d6378; font-style: italic; }
+.tok-punc  { color: #888da0; }

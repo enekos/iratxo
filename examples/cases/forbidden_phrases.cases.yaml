@@ -1,0 +1,26 @@
+cases:
+  - name: clean message classifies ok
+    input: |
+      Hi there. This is not financial advice — please review your own situation.
+    expect:
+      classify: ok
+
+  - name: refund guarantee triggers the no-refund-guarantee rule
+    input: "Sign up today for a guaranteed refund."
+    expect:
+      classify: review_required
+      triggers: [no_refund_guarantee]
+
+  - name: FDA-approved is a regulated claim, classifies blocked
+    input: "Our product is FDA approved and works."
+    expect:
+      classify: blocked
+      triggers: [prohibited_claim]
+      not_triggers: [no_refund_guarantee]
+      confidence_min: 0.99
+
+  - name: cancellation phrasing routes to retention review
+    input: "Hi support, please terminate my contract immediately. This is not financial advice."
+    expect:
+      classify: review_required
+      triggers: [cancellation_intent]

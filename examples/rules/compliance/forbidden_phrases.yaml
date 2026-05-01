@@ -1,0 +1,43 @@
+name: outbound_compliance
+description: Outbound customer communication compliance pack (MVP example).
+
+rules:
+  - id: no_refund_guarantee
+    when:
+      contains_any:
+        - "guaranteed refund"
+        - "100% refund"
+        - "money back guarantee"
+    classify: review_required
+    confidence: 0.95
+    explanation: "Forbidden refund-guarantee language."
+
+  - id: missing_disclaimer
+    when:
+      not_contains_any:
+        - "This is not financial advice"
+    classify: review_required
+    confidence: 0.7
+    explanation: "Required financial-advice disclaimer is missing."
+
+  - id: prohibited_claim
+    when:
+      regex: "\\b(cure|guaranteed cure|FDA approved)\\b"
+    classify: blocked
+    confidence: 0.99
+    explanation: "Regulated medical/efficacy claim detected."
+
+  - id: cancellation_intent
+    when:
+      semantic_match:
+        examples:
+          - "the user wants to cancel their agreement"
+          - "please end my subscription"
+        threshold: 0.3
+    classify: review_required
+    confidence: 0.6
+    explanation: "Likely cancellation request — route to retention."
+
+default:
+  classify: ok
+  confidence: 1.0
