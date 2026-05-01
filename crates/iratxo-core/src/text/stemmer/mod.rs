@@ -9,12 +9,16 @@ mod snowball_word;
 
 use crate::text::lang::Language;
 use rust_stemmers::{Algorithm, Stemmer};
+use std::sync::OnceLock;
+
+static EN_STEMMER: OnceLock<Stemmer> = OnceLock::new();
+static ES_STEMMER: OnceLock<Stemmer> = OnceLock::new();
 
 pub fn stem(word: &str, lang: Language) -> String {
     if word.is_empty() { return String::new(); }
     match lang {
-        Language::English => Stemmer::create(Algorithm::English).stem(word).into_owned(),
-        Language::Spanish => Stemmer::create(Algorithm::Spanish).stem(word).into_owned(),
+        Language::English => EN_STEMMER.get_or_init(|| Stemmer::create(Algorithm::English)).stem(word).into_owned(),
+        Language::Spanish => ES_STEMMER.get_or_init(|| Stemmer::create(Algorithm::Spanish)).stem(word).into_owned(),
         Language::Basque  => basque::stem(word),
     }
 }

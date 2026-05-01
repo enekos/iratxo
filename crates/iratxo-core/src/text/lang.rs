@@ -48,7 +48,7 @@ pub fn detect_language(text: &str) -> Language {
     if lower.contains("tx") { s_eu += 5; }
     if lower.contains("tz") { s_eu += 3; }
 
-    for tok in tokenize(text) {
+    for tok in tokenize(&lower) {
         if EN_DETECT.binary_search(&tok.as_str()).is_ok() { s_en += 2; }
         if ES_DETECT.binary_search(&tok.as_str()).is_ok() { s_es += 2; }
         if EU_DETECT.binary_search(&tok.as_str()).is_ok() { s_eu += 2; }

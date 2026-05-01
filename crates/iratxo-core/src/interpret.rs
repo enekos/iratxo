@@ -101,10 +101,8 @@ impl<'a> Ctx<'a> {
     }
 }
 
-use std::cell::RefCell as StdRefCell;
-
 thread_local! {
-    static GLOBAL_REGEX_CACHE: StdRefCell<HashMap<(String, bool), Option<Regex>>> = StdRefCell::new(HashMap::new());
+    static GLOBAL_REGEX_CACHE: RefCell<HashMap<(String, bool), Option<Regex>>> = RefCell::new(HashMap::new());
 }
 
 fn regex_cache() -> RegexCache {
@@ -216,14 +214,6 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
 }
 
 // ---------- predicate helpers ----------
-
-fn contains(haystack: &str, needle: &str, case_sensitive: bool) -> bool {
-    if case_sensitive {
-        haystack.contains(needle)
-    } else {
-        haystack.to_lowercase().contains(&needle.to_lowercase())
-    }
-}
 
 fn contains_ctx(ctx: &Ctx, needle: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
