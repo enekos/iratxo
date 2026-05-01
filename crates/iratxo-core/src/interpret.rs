@@ -30,10 +30,8 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
     let ctx = Ctx::new(input);
     let mut triggered: Vec<TriggeredRule> = Vec::new();
     let mut visited: HashSet<String> = HashSet::new();
-    let by_id: HashMap<&str, &Rule> = program.rules.iter().map(|r| (r.id.as_str(), r)).collect();
-
     for rule in &program.rules {
-        eval_rule(rule, &by_id, &ctx, &mut triggered, &mut visited);
+        eval_rule(rule, &program.rules, &ctx, &mut triggered, &mut visited);
     }
 
     let winner: &Verdict = triggered
@@ -52,9 +50,9 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
     }
 }
 
-fn eval_rule<'a>(
-    rule: &'a Rule,
-    by_id: &HashMap<&'a str, &'a Rule>,
+fn eval_rule(
+    rule: &Rule,
+    rules: &[Rule],
     ctx: &Ctx,
     out: &mut Vec<TriggeredRule>,
     visited: &mut HashSet<String>,
@@ -68,8 +66,8 @@ fn eval_rule<'a>(
         explanation: rule.verdict.explanation.clone(),
     });
     for chained_id in &rule.then {
-        if let Some(next) = by_id.get(chained_id.as_str()) {
-            eval_rule(next, by_id, ctx, out, visited);
+        if let Some(next) = rules.iter().find(|r| r.id == *chained_id) {
+            eval_rule(next, rules, ctx, out, visited);
         }
     }
 }
