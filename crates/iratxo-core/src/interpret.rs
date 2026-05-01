@@ -29,7 +29,7 @@ pub struct TriggeredRule {
 pub fn evaluate(program: &Program, input: &str) -> EvalResult {
     let ctx = Ctx::new(input);
     let mut triggered: Vec<TriggeredRule> = Vec::new();
-    let mut visited: HashSet<String> = HashSet::new();
+    let mut visited: HashSet<&str> = HashSet::new();
     for rule in &program.rules {
         eval_rule(rule, &program.rules, &ctx, &mut triggered, &mut visited);
     }
@@ -51,14 +51,14 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
 }
 
 #[inline]
-fn eval_rule(
-    rule: &Rule,
-    rules: &[Rule],
+fn eval_rule<'a>(
+    rule: &'a Rule,
+    rules: &'a [Rule],
     ctx: &Ctx,
     out: &mut Vec<TriggeredRule>,
-    visited: &mut HashSet<String>,
+    visited: &mut HashSet<&'a str>,
 ) {
-    if !visited.insert(rule.id.clone()) { return; } // cycle / duplicate guard
+    if !visited.insert(rule.id.as_str()) { return; } // cycle / duplicate guard
     if !eval_predicate(&rule.when, ctx) { return; }
     out.push(TriggeredRule {
         id: rule.id.clone(),
@@ -875,6 +875,279 @@ rules:
         // Plain English prose: no token has high enough entropy.
         assert_eq!(
             evaluate(&p, "the quick brown fox jumps over the lazy dog repeatedly").classification,
+            "ok"
+        );
+    }
+
+    // ---------- v3 predicate tests ----------
+
+    #[test]
+    fn word_contains_any_respects_word_boundary() {
+        let yaml = r#"
+name: w
+rules:
+  - id: cat
+    when: { word_contains_any: ["cat"] }
+    classify: hit
+    confidence: 0.9
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        assert_eq!(evaluate(&p, "the cat sat").classification, "hit");
+        // "category" must NOT match — substring "cat" is inside a longer word.
+        assert_eq!(evaluate(&p, "the category list").classification, "ok");
+    }
+
+    #[test]
+    fn starts_and_ends_with_any() {
+        let yaml = r#"
+name: bookends
+rules:
+  - id: salutation
+    when: { starts_with_any: ["dear ", "hello "] }
+    classify: greeted
+    confidence: 0.9
+  - id: signoff
+    when: { ends_with_any: ["regards", "thanks", "cheers"] }
+    classify: signed
+    confidence: 0.8
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        assert_eq!(evaluate(&p, "Dear Alice, please...").classification, "greeted");
+        assert_eq!(evaluate(&p, "...Best regards").classification, "signed");
+        assert_eq!(evaluate(&p, "no greeting or signoff body").classification, "ok");
+    }
+
+    #[test]
+    fn sentence_and_char_and_line_counts() {
+        let yaml = r#"
+name: shape
+rules:
+  - id: too_long
+    when: { sentences: { min: 4 } }
+    classify: long
+    confidence: 0.9
+  - id: too_wide
+    when: { chars: { min: 5000 } }
+    classify: wide
+    confidence: 0.95
+  - id: too_tall
+    when: { lines: { min: 50 } }
+    classify: tall
+    confidence: 0.7
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        let four = "One. Two! Three? Four.";
+        assert_eq!(evaluate(&p, four).classification, "long");
+        let big = "x".repeat(5001);
+        assert_eq!(evaluate(&p, &big).classification, "wide");
+        let tall = "x\n".repeat(60);
+        assert_eq!(evaluate(&p, &tall).classification, "tall");
+        assert_eq!(evaluate(&p, "Just one short sentence.").classification, "ok");
+    }
+
+    #[test]
+    fn digit_and_punctuation_ratio() {
+        let yaml = r#"
+name: ratios
+rules:
+  - id: numeric_dump
+    when: { digit_ratio_above: { min_ratio: 0.5 } }
+    classify: digits
+    confidence: 0.9
+  - id: punct_burst
+    when: { punctuation_ratio_above: { min_ratio: 0.4 } }
+    classify: punct
+    confidence: 0.8
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        assert_eq!(evaluate(&p, "12345 67890 ab").classification, "digits");
+        assert_eq!(evaluate(&p, "!!!??? ... !!!").classification, "punct");
+        assert_eq!(evaluate(&p, "ordinary prose with words").classification, "ok");
+    }
+
+    #[test]
+    fn repeated_char_run_catches_yelling_and_stuttering() {
+        let yaml = r#"
+name: rep
+rules:
+  - id: spammy
+    when: { repeated_char_run: { min_run: 5 } }
+    classify: spam
+    confidence: 0.9
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        assert_eq!(evaluate(&p, "soooooo cool").classification, "spam");
+        assert_eq!(evaluate(&p, "what?!!!!!").classification, "spam");
+        assert_eq!(evaluate(&p, "perfectly normal text").classification, "ok");
+    }
+
+    #[test]
+    fn repeated_token_detects_copy_paste() {
+        let yaml = r#"
+name: copy
+rules:
+  - id: spam
+    when: { repeated_token: { min_count: 4 } }
+    classify: spam
+    confidence: 0.9
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        assert_eq!(
+            evaluate(&p, "buy buy buy buy this product now").classification,
+            "spam"
+        );
+        assert_eq!(evaluate(&p, "buy our product today").classification, "ok");
+    }
+
+    #[test]
+    fn type_token_ratio_below_flags_low_diversity() {
+        let yaml = r#"
+name: ttr
+rules:
+  - id: low_diversity
+    when: { type_token_ratio_below: { max_ratio: 0.4 } }
+    classify: low_div
+    confidence: 0.9
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        assert_eq!(
+            evaluate(&p, "buy buy buy buy buy buy now now now now").classification,
+            "low_div"
+        );
+        assert_eq!(
+            evaluate(&p, "every word in this sentence is distinct lexically").classification,
+            "ok"
+        );
+    }
+
+    #[test]
+    fn invisible_char_and_mixed_script_detection() {
+        let yaml = r#"
+name: phish
+rules:
+  - id: zwsp
+    when: { has_invisible_chars: true }
+    classify: hidden
+    confidence: 0.95
+  - id: mixed
+    when: { has_mixed_script_token: true }
+    classify: homoglyph
+    confidence: 0.95
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        let zwsp = "Pay\u{200B}Pal account update";
+        let mixed = "Login to Pаypal now"; // Cyrillic 'а' inside Latin
+        let r1 = evaluate(&p, zwsp);
+        assert!(r1.triggered.iter().any(|t| t.id == "zwsp"));
+        let r2 = evaluate(&p, mixed);
+        assert!(r2.triggered.iter().any(|t| t.id == "mixed"));
+        assert_eq!(evaluate(&p, "Login to Paypal now").classification, "ok");
+    }
+
+    #[test]
+    fn script_is_filter() {
+        let yaml = r#"
+name: scripts
+rules:
+  - id: cyr
+    when: { script_is: ["cyrillic"] }
+    classify: cyrillic
+    confidence: 0.9
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        assert_eq!(evaluate(&p, "Привет, мир!").classification, "cyrillic");
+        assert_eq!(evaluate(&p, "Hello world").classification, "ok");
+    }
+
+    #[test]
+    fn new_entity_kinds_recognized() {
+        let yaml = r#"
+name: pii
+rules:
+  - id: card
+    when: { has_entity: { kind: credit_card } }
+    classify: card
+    confidence: 0.95
+  - id: ip
+    when: { has_entity: { kind: ip_address } }
+    classify: ip
+    confidence: 0.9
+  - id: iban_hit
+    when: { has_entity: { kind: iban } }
+    classify: iban
+    confidence: 0.9
+  - id: dated
+    when: { has_entity: { kind: date_iso } }
+    classify: dated
+    confidence: 0.7
+  - id: hash
+    when: { has_entity: { kind: hashtag } }
+    classify: hashtagged
+    confidence: 0.6
+  - id: ment
+    when: { has_entity: { kind: mention } }
+    classify: mentioned
+    confidence: 0.6
+  - id: emo
+    when: { has_entity: { kind: emoji } }
+    classify: emoji
+    confidence: 0.5
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        // 4242 4242 4242 4242 is a Visa Luhn-valid test card.
+        assert!(evaluate(&p, "card 4242 4242 4242 4242").triggered.iter().any(|t| t.id == "card"));
+        assert!(evaluate(&p, "server at 192.168.1.42 down").triggered.iter().any(|t| t.id == "ip"));
+        assert!(evaluate(&p, "wire to DE89370400440532013000 today").triggered.iter().any(|t| t.id == "iban_hit"));
+        assert!(evaluate(&p, "due 2026-05-30").triggered.iter().any(|t| t.id == "dated"));
+        assert!(evaluate(&p, "look at #urgent now").triggered.iter().any(|t| t.id == "hash"));
+        assert!(evaluate(&p, "hi @alice please review").triggered.iter().any(|t| t.id == "ment"));
+        assert!(evaluate(&p, "nice job 🎉🎉").triggered.iter().any(|t| t.id == "emo"));
+    }
+
+    #[test]
+    fn detects_catalan_via_predicate() {
+        let yaml = r#"
+name: lang
+rules:
+  - id: is_catalan
+    when: { language_is: ["ca"] }
+    classify: ca
+    confidence: 0.9
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        assert_eq!(
+            evaluate(&p, "Bon dia! Aquesta és la nostra política d'ús.").classification,
+            "ca"
+        );
+    }
+
+    #[test]
+    fn catalan_semantic_match_works() {
+        // The Catalan synonym dict maps "finalitzar"/"cancellar" → "acabar" and
+        // "acord"/"conveni" → "contracte", so synonym variants of the example
+        // sentence should land on the same hashed buckets after stemming.
+        let yaml = r#"
+name: ca_intent
+rules:
+  - id: cancel_intent
+    when:
+      semantic_match:
+        examples: ["l'usuari vol cancellar el contracte"]
+        threshold: 0.3
+        language: "ca"
+    classify: cancel
+    confidence: 0.9
+default: { classify: ok, confidence: 1.0 }
+"#;
+        let p = compile_yaml(yaml).unwrap();
+        // Variant phrasing using "acabeu" + "acord" — both expected to canonicalize
+        // to "acabar" / "contracte".
+        assert_eq!(
+            evaluate(&p, "acabeu el meu acord").classification,
+            "cancel"
+        );
+        assert_eq!(
+            evaluate(&p, "tinc fam i pluja").classification,
             "ok"
         );
     }
