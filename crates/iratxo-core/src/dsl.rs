@@ -239,9 +239,18 @@ fn lower_verdict(v: DslVerdict) -> Verdict {
 fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
     let cs = p.case_sensitive;
     let mut variants: Vec<Predicate> = Vec::new();
-    if let Some(n) = p.contains_any { variants.push(Predicate::ContainsAny { needles: n, case_sensitive: cs }); }
-    if let Some(n) = p.contains_all { variants.push(Predicate::ContainsAll { needles: n, case_sensitive: cs }); }
-    if let Some(n) = p.not_contains_any { variants.push(Predicate::NotContainsAny { needles: n, case_sensitive: cs }); }
+    if let Some(n) = p.contains_any {
+        let needles = if cs { n } else { n.into_iter().map(|s| s.to_lowercase()).collect() };
+        variants.push(Predicate::ContainsAny { needles, case_sensitive: cs });
+    }
+    if let Some(n) = p.contains_all {
+        let needles = if cs { n } else { n.into_iter().map(|s| s.to_lowercase()).collect() };
+        variants.push(Predicate::ContainsAll { needles, case_sensitive: cs });
+    }
+    if let Some(n) = p.not_contains_any {
+        let needles = if cs { n } else { n.into_iter().map(|s| s.to_lowercase()).collect() };
+        variants.push(Predicate::NotContainsAny { needles, case_sensitive: cs });
+    }
     if let Some(r) = p.regex { variants.push(Predicate::Regex { pattern: r, case_sensitive: cs }); }
     if let Some(n) = p.min_length { variants.push(Predicate::MinLength { tokens: n }); }
     if let Some(n) = p.max_length { variants.push(Predicate::MaxLength { tokens: n }); }

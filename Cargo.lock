@@ -826,6 +826,7 @@ dependencies = [
  "criterion",
  "regex",
  "rust-stemmers",
+ "rustc-hash",
  "serde",
  "serde_json",
  "serde_yaml",

@@ -4,6 +4,7 @@ use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use rustc_hash::FxHashMap;
 
 #[derive(Debug, Serialize)]
 pub struct EvalResult {
@@ -78,22 +79,16 @@ fn eval_rule<'a>(
 /// `evaluate` call.
 struct Ctx<'a> {
     input: &'a str,
-    /// Lazily-computed lowercase version of the input, used by case-insensitive
-    /// predicates to avoid repeated `to_lowercase()` calls.
-    lower: RefCell<Option<String>>,
+    lower: String,
 }
 
 impl<'a> Ctx<'a> {
     fn new(input: &'a str) -> Self {
-        Ctx { input, lower: RefCell::new(None) }
+        Ctx { input, lower: input.to_lowercase() }
     }
 
-    fn lower(&self) -> String {
-        let mut cache = self.lower.borrow_mut();
-        if cache.is_none() {
-            *cache = Some(self.input.to_lowercase());
-        }
-        cache.as_ref().unwrap().clone()
+    fn lower(&self) -> &str {
+        &self.lower
     }
 
     fn regex(pattern: &str, case_sensitive: bool) -> Option<Regex> {
@@ -102,7 +97,7 @@ impl<'a> Ctx<'a> {
 }
 
 thread_local! {
-    static GLOBAL_REGEX_CACHE: RefCell<HashMap<(String, bool), Option<Regex>>> = RefCell::new(HashMap::new());
+    static GLOBAL_REGEX_CACHE: RefCell<FxHashMap<(String, bool), Option<Regex>>> = RefCell::new(FxHashMap::default());
 }
 
 fn regex_cache() -> RegexCache {
@@ -219,7 +214,7 @@ fn contains_ctx(ctx: &Ctx, needle: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         ctx.input.contains(needle)
     } else {
-        ctx.lower().contains(&needle.to_lowercase())
+        ctx.lower().contains(needle)
     }
 }
 
