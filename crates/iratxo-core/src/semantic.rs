@@ -16,12 +16,14 @@ const DIM: usize = 256;
 
 const BUILTIN_SYNONYMS_EN: &str = include_str!("data/synonyms.json");
 const BUILTIN_SYNONYMS_ES: &str = include_str!("data/synonyms_es.json");
+const BUILTIN_SYNONYMS_CA: &str = include_str!("data/synonyms_ca.json");
 const BUILTIN_SYNONYMS_EU: &str = include_str!("data/synonyms_eu.json");
 
 fn builtin_source(lang: Language) -> &'static str {
     match lang {
         Language::English => BUILTIN_SYNONYMS_EN,
         Language::Spanish => BUILTIN_SYNONYMS_ES,
+        Language::Catalan => BUILTIN_SYNONYMS_CA,
         Language::Basque  => BUILTIN_SYNONYMS_EU,
     }
 }

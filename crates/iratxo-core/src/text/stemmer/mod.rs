@@ -2,9 +2,11 @@
 //!
 //! - English / Spanish: delegated to `rust-stemmers`, which implements the
 //!   Snowball algorithms (the same family marrow uses).
+//! - Catalan: hand-rolled light stemmer (rust-stemmers does not ship Catalan).
 //! - Basque: hand-port of marrow's stemmer (no upstream Rust crate exists).
 
 mod basque;
+mod catalan;
 mod snowball_word;
 
 use crate::text::lang::Language;
@@ -19,6 +21,7 @@ pub fn stem(word: &str, lang: Language) -> String {
     match lang {
         Language::English => EN_STEMMER.get_or_init(|| Stemmer::create(Algorithm::English)).stem(word).into_owned(),
         Language::Spanish => ES_STEMMER.get_or_init(|| Stemmer::create(Algorithm::Spanish)).stem(word).into_owned(),
+        Language::Catalan => catalan::stem(word),
         Language::Basque  => basque::stem(word),
     }
 }
@@ -40,6 +43,12 @@ mod tests {
         assert_eq!(stem("corriendo", Language::Spanish), "corr");
         assert_eq!(stem("hablando",  Language::Spanish), "habl");
         assert_eq!(stem("políticas", Language::Spanish), "polit");
+    }
+
+    #[test]
+    fn catalan_collapses_inflections() {
+        assert_eq!(stem("contractes", Language::Catalan), stem("contracte", Language::Catalan));
+        assert_eq!(stem("política",   Language::Catalan), stem("politica",  Language::Catalan));
     }
 
     #[test]
