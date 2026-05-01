@@ -2,7 +2,6 @@
 //!
 //! - English / Spanish: delegated to `rust-stemmers`, which implements the
 //!   Snowball algorithms (the same family marrow uses).
-//! - Catalan: hand-rolled light stemmer (rust-stemmers does not ship Catalan).
 //! - Basque: hand-port of marrow's stemmer (no upstream Rust crate exists).
 
 mod basque;

@@ -110,13 +110,37 @@ impl RegexCache {
             let mut cache = cell.borrow_mut();
             let key = (pattern.to_string(), case_sensitive);
             cache.entry(key).or_insert_with(|| {
-                RegexBuilder::new(pattern)
-                    .case_insensitive(!case_sensitive)
-                    .build()
-                    .ok()
+                let mut builder = RegexBuilder::new(pattern);
+                builder.case_insensitive(!case_sensitive);
+                // For ASCII-only patterns without Unicode character classes,
+                // disable Unicode mode for faster byte-oriented matching.
+                if is_ascii_only_regex(pattern) {
+                    builder.unicode(false);
+                }
+                builder.build().ok()
             }).clone()
         })
     }
+}
+
+/// Conservative heuristic: pattern is ASCII-only and contains no \p{…}, \P{…},
+/// or explicit (?u) / (?-u) flag overrides. Safe to build with unicode(false).
+fn is_ascii_only_regex(pattern: &str) -> bool {
+    if !pattern.is_ascii() {
+        return false;
+    }
+    // Reject explicit unicode flag directives and Unicode property escapes.
+    if pattern.contains("(?u)") || pattern.contains("(?-u)") {
+        return false;
+    }
+    // Quick scan for \p{ or \P{ — these require Unicode mode to work correctly.
+    let bytes = pattern.as_bytes();
+    for w in bytes.windows(3) {
+        if w[0] == b'\\' && (w[1] == b'p' || w[1] == b'P') && w[2] == b'{' {
+            return false;
+        }
+    }
+    true
 }
 
 fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
