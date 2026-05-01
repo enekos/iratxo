@@ -58,7 +58,7 @@ pub enum Predicate {
     ParagraphCount { min: Option<u32>, max: Option<u32> },
     /// Average words-per-sentence is at most `max`. Useful for readability.
     MaxWordsPerSentence { max: u32 },
-    /// Detected language matches one of these codes ("en", "es", "eu").
+    /// Detected language matches one of these codes ("en", "es", "ca", "eu").
     LanguageIs { codes: Vec<String> },
     /// At least one URL in the input has a host matching one of `domains`.
     /// When `allow_subdomains` is true (default), `*.example.com` also matches
@@ -72,6 +72,46 @@ pub enum Predicate {
     /// Useful for catching API keys / random secrets not covered by a known
     /// vendor regex.
     TokenEntropyAbove { min_bits: f32, min_token_len: u32 },
+
+    // ---------- v3 additions ----------
+
+    /// At least one of `needles` appears as a whole word (Unicode word boundary).
+    /// Stricter than `ContainsAny` — "cat" matches "the cat sat" but not "category".
+    WordContainsAny { needles: Vec<String>, case_sensitive: bool },
+    /// Trimmed input begins with one of the prefixes.
+    StartsWithAny { prefixes: Vec<String>, case_sensitive: bool },
+    /// Trimmed input ends with one of the suffixes.
+    EndsWithAny { suffixes: Vec<String>, case_sensitive: bool },
+    /// Number of sentences (split on `.` `!` `?`) is in `[min, max]`.
+    SentenceCount { min: Option<u32>, max: Option<u32> },
+    /// Character count is in `[min, max]`. Counts Unicode scalars.
+    CharCount { min: Option<u32>, max: Option<u32> },
+    /// Number of `\n`-separated lines is in `[min, max]`.
+    LineCount { min: Option<u32>, max: Option<u32> },
+    /// Fraction of non-whitespace chars that are digits ≥ `min_ratio`.
+    DigitRatioAbove { min_ratio: f32 },
+    /// Fraction of non-whitespace chars that are ASCII punctuation ≥ `min_ratio`.
+    PunctuationRatioAbove { min_ratio: f32 },
+    /// Some run of `min_run` consecutive identical chars exists. Catches
+    /// "soooooo" (letter run), "!!!!!" (punct run), or "............".
+    RepeatedCharRun { min_run: u32 },
+    /// Some non-stopword token (after lowercasing) appears `min_count`+ times.
+    /// Detects spammy repetition.
+    RepeatedToken { min_count: u32 },
+    /// Type-token ratio (unique-tokens / total-tokens) is *at most* `max_ratio`.
+    /// Low TTR ⇒ low lexical diversity (e.g. spam, copy-paste).
+    TypeTokenRatioBelow { max_ratio: f32 },
+    /// Input contains at least one invisible / zero-width / BOM character.
+    /// Used to flag phishing or homoglyph-style obfuscation.
+    HasInvisibleChars,
+    /// Input contains at least one token mixing chars from multiple Unicode
+    /// scripts (e.g. Cyrillic 'а' inside Latin "PayPal"). Homoglyph defense.
+    HasMixedScriptToken,
+    /// Input contains characters from at least one of the listed scripts.
+    /// Codes: `latin`, `cyrillic`, `greek`, `han`, `hiragana`, `katakana`,
+    /// `hangul`, `arabic`, `hebrew`, `devanagari`, `thai`.
+    ScriptIs { scripts: Vec<String> },
+
     All(Vec<Predicate>),
     Any(Vec<Predicate>),
     Not(Box<Predicate>),
@@ -84,4 +124,12 @@ pub enum EntityKind {
     Phone,
     Url,
     Currency,
+    // v3 additions
+    IpAddress,
+    CreditCard,
+    Iban,
+    DateIso,
+    Hashtag,
+    Mention,
+    Emoji,
 }
