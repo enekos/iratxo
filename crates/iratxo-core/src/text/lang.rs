@@ -88,7 +88,7 @@ const EN_DETECT: &[&str] = &[
     "long","look","looked","make","many","may","maybe","me","might","more","most","much","must",
     "my","myself","never","new","next","no","not","now","of","off","often","old","on","once",
     "one","only","or","other","ought","our","out","over","own","perhaps","please","probably",
-    "public","really","right","said","same","say","says","see","seen","she","should","shall",
+    "public","really","right","said","same","say","says","see","seen","shall","she","should",
     "small","so","some","something","sometimes","still","such","sure","take","than","that","the",
     "their","them","then","there","these","they","this","those","though","through","thus","to",
     "today","together","too","took","twice","under","until","up","upon","us","use","used","using",
@@ -142,15 +142,16 @@ const CA_DETECT: &[&str] = &[
     "vostre", "vostres", "y", "ya", "ès",
 ];
 const EU_DETECT: &[&str] = &[
-    "ala","alde","arte","atzean","aurka","aurre","aurrean","azpian","bada","baietz","baina",
-    "bai","barruan","bat","beraz","berori","bestela","beti","bezala","bi","bitartean","da",
-    "dago","daude","ditu","donostia","du","dute","edo","egin","egun","ere","etxe","etxea",
-    "euskal","euskara","ez","ezetz","eta","gainean","gainera","gero","gisa","gu","gure","gutxi",
-    "guzti","haien","haiek","haren","hau","hemen","han","herri","honela","hor","hori","hortxe",
-    "inoiz","izan","izena","kale","kalean","kaleak","kanpoan","kontra","lehen","ni","nire",
-    "noiz","nola","nondik","nor","nori","nork","ondo","ondoren","oraingo","orain","orduan",
-    "oso","ostean","ta","tartean","tu","ti","te","tun","urte","zai","zenbat","zer",
-    "zergatik","zion","zu","zuek","zuen","zure",
+    "ala", "alde", "arte", "atzean", "aurka", "aurre", "aurrean", "azpian", "bada", "bai",
+    "baietz", "baina", "barruan", "bat", "beraz", "berori", "bestela", "beti", "bezala", "bi",
+    "bitartean", "da", "dago", "daude", "ditu", "donostia", "du", "dute", "edo", "egin", "egun",
+    "ere", "eta", "etxe", "etxea", "euskal", "euskara", "ez", "ezetz", "gainean", "gainera",
+    "gero", "gisa", "gu", "gure", "gutxi", "guzti", "haiek", "haien", "han", "haren", "hau",
+    "hemen", "herri", "honela", "hor", "hori", "hortxe", "inoiz", "izan", "izena", "kale",
+    "kaleak", "kalean", "kanpoan", "kontra", "lehen", "ni", "nire", "noiz", "nola", "nondik",
+    "nor", "nori", "nork", "ondo", "ondoren", "orain", "oraingo", "orduan", "oso", "ostean",
+    "ta", "tartean", "te", "ti", "tu", "tun", "urte", "zai", "zenbat", "zer", "zergatik",
+    "zion", "zu", "zuek", "zuen", "zure",
 ];
 
 #[cfg(test)]
