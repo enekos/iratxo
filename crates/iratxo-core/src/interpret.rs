@@ -50,6 +50,7 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
     }
 }
 
+#[inline]
 fn eval_rule(
     rule: &Rule,
     rules: &[Rule],
@@ -143,6 +144,7 @@ fn is_ascii_only_regex(pattern: &str) -> bool {
     true
 }
 
+#[inline]
 fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
     let input = ctx.input;
     match p {
@@ -227,11 +229,106 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
                 semantic::similarity_lang(input, ex, lang, extra_idx.as_ref()) >= *threshold
             })
         }
+
+        // ---------- v3 heuristics ----------
+        Predicate::WordContainsAny { needles, case_sensitive } => {
+            let hay = if *case_sensitive { input } else { ctx.lower() };
+            needles.iter().any(|n| word_contains(hay, n))
+        }
+        Predicate::StartsWithAny { prefixes, case_sensitive } => {
+            let hay = if *case_sensitive { input.trim_start() } else {
+                ctx.lower().trim_start_matches(char::is_whitespace)
+            };
+            prefixes.iter().any(|p| hay.starts_with(p.as_str()))
+        }
+        Predicate::EndsWithAny { suffixes, case_sensitive } => {
+            let hay = if *case_sensitive { input.trim_end() } else {
+                ctx.lower().trim_end_matches(char::is_whitespace)
+            };
+            suffixes.iter().any(|s| hay.ends_with(s.as_str()))
+        }
+        Predicate::SentenceCount { min, max } => {
+            let n = sentence_count(input);
+            min.map_or(true, |m| n >= m as usize) && max.map_or(true, |m| n <= m as usize)
+        }
+        Predicate::CharCount { min, max } => {
+            let n = input.chars().count();
+            min.map_or(true, |m| n >= m as usize) && max.map_or(true, |m| n <= m as usize)
+        }
+        Predicate::LineCount { min, max } => {
+            let n = if input.is_empty() { 0 } else { input.lines().count() };
+            min.map_or(true, |m| n >= m as usize) && max.map_or(true, |m| n <= m as usize)
+        }
+        Predicate::DigitRatioAbove { min_ratio } => {
+            let (mut total, mut digits) = (0u32, 0u32);
+            for c in input.chars() {
+                if c.is_whitespace() { continue; }
+                total += 1;
+                if c.is_ascii_digit() { digits += 1; }
+            }
+            if total == 0 { false } else { (digits as f32) / (total as f32) >= *min_ratio }
+        }
+        Predicate::PunctuationRatioAbove { min_ratio } => {
+            let (mut total, mut punct) = (0u32, 0u32);
+            for c in input.chars() {
+                if c.is_whitespace() { continue; }
+                total += 1;
+                if c.is_ascii_punctuation() { punct += 1; }
+            }
+            if total == 0 { false } else { (punct as f32) / (total as f32) >= *min_ratio }
+        }
+        Predicate::RepeatedCharRun { min_run } => {
+            let mut prev: Option<char> = None;
+            let mut run: u32 = 0;
+            for c in input.chars() {
+                if c.is_whitespace() {
+                    prev = None;
+                    run = 0;
+                    continue;
+                }
+                if Some(c) == prev {
+                    run += 1;
+                    if run >= *min_run { return true; }
+                } else {
+                    prev = Some(c);
+                    run = 1;
+                }
+            }
+            false
+        }
+        Predicate::RepeatedToken { min_count } => {
+            use std::collections::HashMap as Map;
+            let mut counts: Map<String, u32> = Map::new();
+            for tok in crate::text::tokenize(input) {
+                if tok.chars().count() < 2 { continue; }
+                let entry = counts.entry(tok).or_insert(0);
+                *entry += 1;
+                if *entry >= *min_count { return true; }
+            }
+            false
+        }
+        Predicate::TypeTokenRatioBelow { max_ratio } => {
+            let toks = crate::text::tokenize(input);
+            if toks.is_empty() { return false; }
+            let total = toks.len() as f32;
+            let unique: std::collections::HashSet<&String> = toks.iter().collect();
+            (unique.len() as f32 / total) <= *max_ratio
+        }
+        Predicate::HasInvisibleChars => input.chars().any(is_invisible_char),
+        Predicate::HasMixedScriptToken => {
+            input.split_whitespace().any(|tok| token_uses_multiple_scripts(tok))
+        }
+        Predicate::ScriptIs { scripts } => {
+            scripts.iter().any(|s| {
+                input.chars().any(|c| char_in_script(c, s))
+            })
+        }
     }
 }
 
 // ---------- predicate helpers ----------
 
+#[inline]
 fn contains_ctx(ctx: &Ctx, needle: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         ctx.input.contains(needle)
@@ -240,14 +337,17 @@ fn contains_ctx(ctx: &Ctx, needle: &str, case_sensitive: bool) -> bool {
     }
 }
 
+#[inline]
 fn token_count(s: &str) -> usize {
     s.split_whitespace().count()
 }
 
+#[inline]
 fn paragraph_count(s: &str) -> usize {
     s.split("\n\n").map(str::trim).filter(|p| !p.is_empty()).count().max(if s.trim().is_empty() { 0 } else { 1 })
 }
 
+#[inline]
 fn max_words_per_sentence(s: &str) -> usize {
     s.split(|c: char| matches!(c, '.' | '!' | '?'))
         .map(|sent| sent.split_whitespace().count())
@@ -257,6 +357,7 @@ fn max_words_per_sentence(s: &str) -> usize {
 
 /// Recognises markdown `#`-style headings and `<h1>..<h6>` HTML headings.
 /// Title comparison is case-insensitive and trims whitespace.
+#[inline]
 fn has_section(input: &str, titles: &[String]) -> bool {
     let wants: Vec<String> = titles.iter().map(|t| t.trim().to_lowercase()).collect();
     for line in input.lines() {
@@ -293,6 +394,7 @@ fn has_section(input: &str, titles: &[String]) -> bool {
     false
 }
 
+#[inline]
 fn strip_html_tags(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut in_tag = false;
@@ -310,6 +412,7 @@ fn strip_html_tags(s: &str) -> String {
 /// Extract hostnames (lowercased) from `http(s)://` URLs in the input.
 /// Strips userinfo, port, and trailing path. Robust enough for predicate use,
 /// not a general URL parser.
+#[inline]
 fn url_hosts(input: &str) -> Vec<String> {
     use std::sync::OnceLock;
     static URL: OnceLock<Regex> = OnceLock::new();
@@ -327,6 +430,7 @@ fn url_hosts(input: &str) -> Vec<String> {
 
 /// Shannon entropy in bits over the empirical char distribution of `s`.
 /// Pure ASCII strings of length 16 with full alphanum diversity sit ~5 bits.
+#[inline]
 fn shannon_entropy(s: &str) -> f32 {
     let mut counts: HashMap<char, u32> = HashMap::new();
     let mut total = 0u32;
@@ -339,19 +443,184 @@ fn shannon_entropy(s: &str) -> f32 {
     }).sum()
 }
 
+#[inline]
 fn count_entities(input: &str, kind: EntityKind) -> usize {
     use std::sync::OnceLock;
-    static EMAIL: OnceLock<Regex> = OnceLock::new();
-    static PHONE: OnceLock<Regex> = OnceLock::new();
-    static URL:   OnceLock<Regex> = OnceLock::new();
-    static CURR:  OnceLock<Regex> = OnceLock::new();
-    let re = match kind {
-        EntityKind::Email    => EMAIL.get_or_init(|| Regex::new(r"(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b").unwrap()),
-        EntityKind::Phone    => PHONE.get_or_init(|| Regex::new(r"\b(?:\+?\d{1,3}[\s\-.]?)?(?:\(?\d{2,4}\)?[\s\-.]?){2,4}\d{2,4}\b").unwrap()),
-        EntityKind::Url      => URL.get_or_init(|| Regex::new(r"(?i)\bhttps?://[a-z0-9.\-]+(?:/[^\s]*)?").unwrap()),
-        EntityKind::Currency => CURR.get_or_init(|| Regex::new(r"(?:[\$£€¥]\s?\d{1,3}(?:[,.]\d{3})*(?:\.\d+)?|\b\d+(?:[.,]\d+)?\s?(?:USD|EUR|GBP|JPY)\b)").unwrap()),
-    };
-    re.find_iter(input).count()
+    static EMAIL:   OnceLock<Regex> = OnceLock::new();
+    static PHONE:   OnceLock<Regex> = OnceLock::new();
+    static URL:     OnceLock<Regex> = OnceLock::new();
+    static CURR:    OnceLock<Regex> = OnceLock::new();
+    static IP:      OnceLock<Regex> = OnceLock::new();
+    static CARD:    OnceLock<Regex> = OnceLock::new();
+    static IBAN:    OnceLock<Regex> = OnceLock::new();
+    static DATE:    OnceLock<Regex> = OnceLock::new();
+    static HASHTAG: OnceLock<Regex> = OnceLock::new();
+    static MENTION: OnceLock<Regex> = OnceLock::new();
+    match kind {
+        EntityKind::Email    => EMAIL.get_or_init(|| Regex::new(r"(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b").unwrap()).find_iter(input).count(),
+        EntityKind::Phone    => PHONE.get_or_init(|| Regex::new(r"\b(?:\+?\d{1,3}[\s\-.]?)?(?:\(?\d{2,4}\)?[\s\-.]?){2,4}\d{2,4}\b").unwrap()).find_iter(input).count(),
+        EntityKind::Url      => URL.get_or_init(|| Regex::new(r"(?i)\bhttps?://[a-z0-9.\-]+(?:/[^\s]*)?").unwrap()).find_iter(input).count(),
+        EntityKind::Currency => CURR.get_or_init(|| Regex::new(r"(?:[\$£€¥]\s?\d{1,3}(?:[,.]\d{3})*(?:\.\d+)?|\b\d+(?:[.,]\d+)?\s?(?:USD|EUR|GBP|JPY)\b)").unwrap()).find_iter(input).count(),
+        EntityKind::IpAddress => {
+            // IPv4 with octet range check, plus a permissive IPv6 form.
+            let v4 = IP.get_or_init(|| Regex::new(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})\b").unwrap());
+            let v6_count = input.split_whitespace()
+                .filter(|tok| looks_like_ipv6(tok.trim_matches(|c: char| !c.is_alphanumeric() && c != ':')))
+                .count();
+            v4.find_iter(input).count() + v6_count
+        }
+        EntityKind::CreditCard => {
+            let re = CARD.get_or_init(|| Regex::new(r"\b(?:\d[ -]?){13,19}\b").unwrap());
+            re.find_iter(input).filter(|m| luhn_check(m.as_str())).count()
+        }
+        EntityKind::Iban => {
+            let re = IBAN.get_or_init(|| Regex::new(r"(?i)\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b").unwrap());
+            re.find_iter(input).count()
+        }
+        EntityKind::DateIso  => DATE.get_or_init(|| Regex::new(r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b").unwrap()).find_iter(input).count(),
+        EntityKind::Hashtag  => HASHTAG.get_or_init(|| Regex::new(r"(?:^|[\s(\[{,;:])#[A-Za-z][\w]{0,49}").unwrap()).find_iter(input).count(),
+        EntityKind::Mention  => MENTION.get_or_init(|| Regex::new(r"(?:^|[\s(\[{,;:])@[A-Za-z0-9_][\w.\-]{0,49}").unwrap()).find_iter(input).count(),
+        EntityKind::Emoji    => input.chars().filter(|c| is_emoji_char(*c)).count(),
+    }
+}
+
+#[inline]
+fn word_contains(hay: &str, needle: &str) -> bool {
+    if needle.is_empty() { return true; }
+    let nbytes = needle.as_bytes();
+    let hbytes = hay.as_bytes();
+    if nbytes.len() > hbytes.len() { return false; }
+    let last = hbytes.len() - nbytes.len();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    'outer: for i in 0..=last {
+        if !hay.is_char_boundary(i) || !hay.is_char_boundary(i + nbytes.len()) { continue; }
+        if &hbytes[i..i + nbytes.len()] != nbytes { continue; }
+        // Boundary check on the byte before and after.
+        if i > 0 {
+            let prev = hbytes[i - 1];
+            if is_word(prev) { continue 'outer; }
+            // Multi-byte char before? char_boundary at i guarantees this prev is a complete byte; if it's part of a non-ASCII char, treat as word-char.
+            if prev >= 0x80 { continue 'outer; }
+        }
+        let after_idx = i + nbytes.len();
+        if after_idx < hbytes.len() {
+            let next = hbytes[after_idx];
+            if is_word(next) { continue 'outer; }
+            if next >= 0x80 { continue 'outer; }
+        }
+        return true;
+    }
+    false
+}
+
+#[inline]
+fn sentence_count(s: &str) -> usize {
+    s.split(|c: char| matches!(c, '.' | '!' | '?'))
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .count()
+}
+
+/// Zero-width and BOM-style invisible characters that appear in homoglyph/
+/// phishing payloads. Whitespace ' ' / '\n' / '\t' are considered visible.
+#[inline]
+fn is_invisible_char(c: char) -> bool {
+    matches!(c,
+        '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{200E}' | '\u{200F}' |
+        '\u{202A}'..='\u{202E}' |
+        '\u{2060}'..='\u{2064}' |
+        '\u{FEFF}' |
+        '\u{180E}' | '\u{00AD}'
+    )
+}
+
+/// Classify a character into one of the supported script families.
+/// Punctuation, digits, and ASCII whitespace return `None`.
+fn classify_script(c: char) -> Option<&'static str> {
+    if c.is_ascii_alphabetic() { return Some("latin"); }
+    let cp = c as u32;
+    match cp {
+        0x00C0..=0x024F | 0x1E00..=0x1EFF              => Some("latin"),
+        0x0370..=0x03FF | 0x1F00..=0x1FFF              => Some("greek"),
+        0x0400..=0x04FF | 0x0500..=0x052F              => Some("cyrillic"),
+        0x0590..=0x05FF                                => Some("hebrew"),
+        0x0600..=0x06FF | 0x0750..=0x077F              => Some("arabic"),
+        0x0900..=0x097F                                => Some("devanagari"),
+        0x0E00..=0x0E7F                                => Some("thai"),
+        0x3040..=0x309F                                => Some("hiragana"),
+        0x30A0..=0x30FF                                => Some("katakana"),
+        0xAC00..=0xD7AF | 0x1100..=0x11FF              => Some("hangul"),
+        0x4E00..=0x9FFF | 0x3400..=0x4DBF              => Some("han"),
+        _ => None,
+    }
+}
+
+#[inline]
+fn char_in_script(c: char, script: &str) -> bool {
+    matches!(classify_script(c), Some(s) if s == script)
+}
+
+fn token_uses_multiple_scripts(tok: &str) -> bool {
+    let mut seen: Option<&'static str> = None;
+    for c in tok.chars() {
+        if let Some(s) = classify_script(c) {
+            match seen {
+                None => seen = Some(s),
+                Some(prev) if prev != s => return true,
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// Validate a putative credit-card number using the Luhn checksum.
+/// `s` may contain spaces or hyphens between digit groups.
+fn luhn_check(s: &str) -> bool {
+    let digits: Vec<u32> = s.chars().filter_map(|c| c.to_digit(10)).collect();
+    if !(13..=19).contains(&digits.len()) { return false; }
+    let mut sum = 0u32;
+    let mut alt = false;
+    for &d in digits.iter().rev() {
+        let mut x = d;
+        if alt { x *= 2; if x > 9 { x -= 9; } }
+        sum += x;
+        alt = !alt;
+    }
+    sum % 10 == 0
+}
+
+/// Conservative IPv6 sniffer: token contains at least 2 colons, uses only
+/// hex digits + colons, has at least two non-empty hex groups. Avoids the
+/// regex-of-doom by leaning on string scans.
+fn looks_like_ipv6(tok: &str) -> bool {
+    if tok.matches(':').count() < 2 { return false; }
+    if !tok.chars().all(|c| c.is_ascii_hexdigit() || c == ':') { return false; }
+    let groups: Vec<&str> = tok.split(':').filter(|g| !g.is_empty()).collect();
+    if groups.len() < 2 { return false; }
+    groups.iter().all(|g| g.len() <= 4)
+}
+
+/// Fast path for the common emoji ranges. Not perfect; covers the ranges
+/// most often used in real-world inputs (basic emoticons, transport, symbols,
+/// supplemental, flags, modifiers).
+#[inline]
+fn is_emoji_char(c: char) -> bool {
+    let cp = c as u32;
+    matches!(cp,
+        0x1F300..=0x1F5FF | // misc symbols & pictographs
+        0x1F600..=0x1F64F | // emoticons
+        0x1F680..=0x1F6FF | // transport & map
+        0x1F700..=0x1F77F |
+        0x1F780..=0x1F7FF |
+        0x1F800..=0x1F8FF |
+        0x1F900..=0x1F9FF | // supplemental
+        0x1FA00..=0x1FA6F |
+        0x1FA70..=0x1FAFF |
+        0x2600..=0x26FF   | // misc symbols
+        0x2700..=0x27BF   | // dingbats
+        0x1F1E6..=0x1F1FF   // regional indicators (flags)
+    )
 }
 
 #[cfg(test)]

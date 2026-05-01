@@ -13,8 +13,15 @@ pub use ir::{Predicate, Program, Rule, Verdict};
 /// Version history:
 ///   1 — initial format.
 ///   2 — adds `HasUrlToDomain`, `MostlyUppercase`, `TokenEntropyAbove` variants.
+///   3 — adds Catalan to `Language` (extends `LanguageIs` codes), seven new
+///       `EntityKind` variants (`IpAddress`, `CreditCard`, `Iban`, `DateIso`,
+///       `Hashtag`, `Mention`, `Emoji`), and twelve new heuristic predicates
+///       (`WordContainsAny`, `StartsWithAny`, `EndsWithAny`, `SentenceCount`,
+///       `CharCount`, `LineCount`, `DigitRatioAbove`, `PunctuationRatioAbove`,
+///       `RepeatedCharRun`, `RepeatedToken`, `TypeTokenRatioBelow`,
+///       `HasInvisibleChars`, `HasMixedScriptToken`, `ScriptIs`).
 pub const IR_MAGIC: &[u8; 4] = b"IRTX";
-pub const IR_VERSION: u16 = 2;
+pub const IR_VERSION: u16 = 3;
 
 #[derive(Debug)]
 pub enum DecodeError {

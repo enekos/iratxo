@@ -133,6 +133,35 @@ struct DslPredicate {
     mostly_uppercase: Option<DslRatio>,
     #[serde(default)]
     token_entropy_above: Option<DslEntropy>,
+    // ---- v3 surface ----
+    #[serde(default)]
+    word_contains_any: Option<Vec<String>>,
+    #[serde(default)]
+    starts_with_any: Option<Vec<String>>,
+    #[serde(default)]
+    ends_with_any: Option<Vec<String>>,
+    #[serde(default)]
+    sentences: Option<DslRange>,
+    #[serde(default)]
+    chars: Option<DslRange>,
+    #[serde(default)]
+    lines: Option<DslRange>,
+    #[serde(default)]
+    digit_ratio_above: Option<DslRatio>,
+    #[serde(default)]
+    punctuation_ratio_above: Option<DslRatio>,
+    #[serde(default)]
+    repeated_char_run: Option<DslMinRun>,
+    #[serde(default)]
+    repeated_token: Option<DslMinCount>,
+    #[serde(default)]
+    type_token_ratio_below: Option<DslMaxRatio>,
+    #[serde(default)]
+    has_invisible_chars: bool,
+    #[serde(default)]
+    has_mixed_script_token: bool,
+    #[serde(default)]
+    script_is: Option<Vec<String>>,
     /// Tautology — useful in `then`-chained rules whose firing depends only
     /// on the parent rule, not on a separate input check.
     #[serde(default)]
@@ -140,6 +169,18 @@ struct DslPredicate {
     #[serde(default = "default_case_sensitive")]
     case_sensitive: bool,
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DslMinRun { min_run: u32 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DslMinCount { min_count: u32 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DslMaxRatio { max_ratio: f32 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -203,6 +244,14 @@ struct DslSemantic {
 fn default_threshold() -> f32 { 0.4 }
 
 fn default_case_sensitive() -> bool { false }
+
+fn is_known_script(s: &str) -> bool {
+    matches!(
+        s,
+        "latin" | "cyrillic" | "greek" | "han" | "hiragana" | "katakana" |
+        "hangul" | "arabic" | "hebrew" | "devanagari" | "thai"
+    )
+}
 
 pub fn parse(src: &str) -> Result<Program, DslError> {
     let doc: DslDoc = serde_yaml::from_str(src).map_err(|e| DslError::from_yaml(e, src))?;
@@ -273,11 +322,21 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
     }
     if let Some(e) = p.has_entity {
         let kind = match e.kind.as_str() {
-            "email"    => EntityKind::Email,
-            "phone"    => EntityKind::Phone,
-            "url"      => EntityKind::Url,
-            "currency" => EntityKind::Currency,
-            other      => return Err(DslError::Validation(format!("unknown entity kind: {} (use email|phone|url|currency)", other))),
+            "email"        => EntityKind::Email,
+            "phone"        => EntityKind::Phone,
+            "url"          => EntityKind::Url,
+            "currency"     => EntityKind::Currency,
+            "ip"           | "ip_address"  => EntityKind::IpAddress,
+            "credit_card"  | "creditcard"  => EntityKind::CreditCard,
+            "iban"                         => EntityKind::Iban,
+            "date"         | "date_iso"    => EntityKind::DateIso,
+            "hashtag"                      => EntityKind::Hashtag,
+            "mention"                      => EntityKind::Mention,
+            "emoji"                        => EntityKind::Emoji,
+            other => return Err(DslError::Validation(format!(
+                "unknown entity kind: {} (use email|phone|url|currency|ip_address|credit_card|iban|date_iso|hashtag|mention|emoji)",
+                other
+            ))),
         };
         variants.push(Predicate::HasEntity { kind, min_count: e.min_count });
     }
@@ -296,7 +355,7 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
         }
         for c in &codes {
             if crate::text::Language::from_code(c).is_none() {
-                return Err(DslError::Validation(format!("unsupported language code: {} (use en|es|eu)", c)));
+                return Err(DslError::Validation(format!("unsupported language code: {} (use en|es|ca|eu)", c)));
             }
         }
         variants.push(Predicate::LanguageIs { codes });
@@ -323,6 +382,97 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
         }
         variants.push(Predicate::TokenEntropyAbove { min_bits: e.min_bits, min_token_len: e.min_token_len });
     }
+    // ---------- v3 predicates ----------
+    if let Some(n) = p.word_contains_any {
+        if n.is_empty() {
+            return Err(DslError::Validation("word_contains_any requires at least one needle".into()));
+        }
+        let needles = if cs { n } else { n.into_iter().map(|s| s.to_lowercase()).collect() };
+        variants.push(Predicate::WordContainsAny { needles, case_sensitive: cs });
+    }
+    if let Some(prefixes) = p.starts_with_any {
+        if prefixes.is_empty() {
+            return Err(DslError::Validation("starts_with_any requires at least one prefix".into()));
+        }
+        let prefixes = if cs { prefixes } else { prefixes.into_iter().map(|s| s.to_lowercase()).collect() };
+        variants.push(Predicate::StartsWithAny { prefixes, case_sensitive: cs });
+    }
+    if let Some(suffixes) = p.ends_with_any {
+        if suffixes.is_empty() {
+            return Err(DslError::Validation("ends_with_any requires at least one suffix".into()));
+        }
+        let suffixes = if cs { suffixes } else { suffixes.into_iter().map(|s| s.to_lowercase()).collect() };
+        variants.push(Predicate::EndsWithAny { suffixes, case_sensitive: cs });
+    }
+    if let Some(r) = p.sentences {
+        if r.min.is_none() && r.max.is_none() {
+            return Err(DslError::Validation("sentences requires at least one of min/max".into()));
+        }
+        variants.push(Predicate::SentenceCount { min: r.min, max: r.max });
+    }
+    if let Some(r) = p.chars {
+        if r.min.is_none() && r.max.is_none() {
+            return Err(DslError::Validation("chars requires at least one of min/max".into()));
+        }
+        variants.push(Predicate::CharCount { min: r.min, max: r.max });
+    }
+    if let Some(r) = p.lines {
+        if r.min.is_none() && r.max.is_none() {
+            return Err(DslError::Validation("lines requires at least one of min/max".into()));
+        }
+        variants.push(Predicate::LineCount { min: r.min, max: r.max });
+    }
+    if let Some(r) = p.digit_ratio_above {
+        if !(0.0..=1.0).contains(&r.min_ratio) {
+            return Err(DslError::Validation(format!("digit_ratio_above min_ratio must be in [0,1], got {}", r.min_ratio)));
+        }
+        variants.push(Predicate::DigitRatioAbove { min_ratio: r.min_ratio });
+    }
+    if let Some(r) = p.punctuation_ratio_above {
+        if !(0.0..=1.0).contains(&r.min_ratio) {
+            return Err(DslError::Validation(format!("punctuation_ratio_above min_ratio must be in [0,1], got {}", r.min_ratio)));
+        }
+        variants.push(Predicate::PunctuationRatioAbove { min_ratio: r.min_ratio });
+    }
+    if let Some(r) = p.repeated_char_run {
+        if r.min_run < 2 {
+            return Err(DslError::Validation("repeated_char_run min_run must be >= 2".into()));
+        }
+        variants.push(Predicate::RepeatedCharRun { min_run: r.min_run });
+    }
+    if let Some(r) = p.repeated_token {
+        if r.min_count < 2 {
+            return Err(DslError::Validation("repeated_token min_count must be >= 2".into()));
+        }
+        variants.push(Predicate::RepeatedToken { min_count: r.min_count });
+    }
+    if let Some(r) = p.type_token_ratio_below {
+        if !(0.0..=1.0).contains(&r.max_ratio) {
+            return Err(DslError::Validation(format!("type_token_ratio_below max_ratio must be in [0,1], got {}", r.max_ratio)));
+        }
+        variants.push(Predicate::TypeTokenRatioBelow { max_ratio: r.max_ratio });
+    }
+    if p.has_invisible_chars {
+        variants.push(Predicate::HasInvisibleChars);
+    }
+    if p.has_mixed_script_token {
+        variants.push(Predicate::HasMixedScriptToken);
+    }
+    if let Some(scripts) = p.script_is {
+        if scripts.is_empty() {
+            return Err(DslError::Validation("script_is requires at least one script".into()));
+        }
+        for s in &scripts {
+            if !is_known_script(s) {
+                return Err(DslError::Validation(format!(
+                    "unknown script: {} (use latin|cyrillic|greek|han|hiragana|katakana|hangul|arabic|hebrew|devanagari|thai)",
+                    s
+                )));
+            }
+        }
+        variants.push(Predicate::ScriptIs { scripts });
+    }
+
     if p.always {
         variants.push(Predicate::Always);
     }
@@ -336,7 +486,7 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
         let extra = s.synonyms.into_iter().collect();
         if let Some(ref code) = s.language {
             if crate::text::Language::from_code(code).is_none() {
-                return Err(DslError::Validation(format!("unsupported language: {} (use en|es|eu)", code)));
+                return Err(DslError::Validation(format!("unsupported language: {} (use en|es|ca|eu)", code)));
             }
         }
         variants.push(Predicate::SemanticMatch {
