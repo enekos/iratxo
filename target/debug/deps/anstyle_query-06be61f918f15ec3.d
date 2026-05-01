@@ -1,6 +1,0 @@
-/Users/enekosarasola/iratxo/target/debug/deps/anstyle_query-06be61f918f15ec3.d: /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-query-1.1.5/src/lib.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-query-1.1.5/src/windows.rs
-
-/Users/enekosarasola/iratxo/target/debug/deps/libanstyle_query-06be61f918f15ec3.rmeta: /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-query-1.1.5/src/lib.rs /Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-query-1.1.5/src/windows.rs
-
-/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-query-1.1.5/src/lib.rs:
-/Users/enekosarasola/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-query-1.1.5/src/windows.rs:

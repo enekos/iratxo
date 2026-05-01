@@ -1,2 +1,0 @@
-cargo:rerun-if-changed=build.rs
-cargo:rustc-env=DEBUG_OUTPUT_DIR=/Users/enekosarasola/iratxo/target/release/build/wasmtime-component-macro-3eaf68134daff078/out
