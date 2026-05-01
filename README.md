@@ -4,11 +4,11 @@ Executable language rules as Wasm plugins. Author rules in YAML, compile to a po
 
 ## Status
 
-41 Rust tests + 850-row Basque parity test + 7 JS host tests all passing. Benchmarks: keyword pack 134µs, 6-regex pack over 5KB doc 246µs, semantic match 3.5µs (M-series Mac, release build).
+57 Rust tests + 850-row Basque parity test + 7 JS host tests all passing. Benchmarks: keyword pack 134µs, 6-regex pack over 5KB doc 246µs, semantic match 3.5µs (M-series Mac, release build).
 
 ## Components
 
-- `iratxo-core` — IR, YAML→IR compiler, deterministic interpreter. Predicates: `contains_any`, `contains_all`, `not_contains_any`, `regex`, `min_length`, `max_length`, `all`/`any`/`not`, and `semantic_match` (hashing-trick token vectors + a small embedded synonym dictionary; user-extensible).
+- `iratxo-core` — IR, YAML→IR compiler, deterministic interpreter. Ships ~30 predicates spanning substring/regex matching, token & character shape gates, repetition / lexical-diversity heuristics, structural (heading, paragraph, sentence, line) gates, entity recognition (email, phone, URL, currency, IPv4/v6, Luhn-validated credit cards, IBAN, ISO dates, hashtags, mentions, emoji), Unicode-script + invisible-char homoglyph defenses, language detection (English / Spanish / Catalan / Basque), and `semantic_match` (hashing-trick token vectors + per-language stemming + a built-in multilingual synonym dictionary; user-extensible).
 - `iratxo-engine` — `cdylib` compiled to `wasm32-unknown-unknown`. Exports `iratxo_alloc`, `iratxo_dealloc`, `iratxo_execute`. Pure, no I/O, no time, no RNG.
 - `iratxo-cli` — `iratxo build|lint|run|run-native|test|sign|verify|keygen`.
 - `hosts/js` — JS package with three entry points (Node, browser, Cloudflare Workers) over the same wasm engine.
@@ -70,10 +70,21 @@ Output of `iratxo run` for a violating input:
 | `max_words_per_sentence` | readability gate |
 | `has_section: [...]` | markdown `#`-heading or `<h1>..<h6>` HTML heading |
 | `has_entity: { kind, min_count }` | `email` / `phone` / `url` / `currency` |
-| `language_is: [...]` | detected language ∈ codes (`en`, `es`, `eu`) |
+| `language_is: [...]` | detected language ∈ codes (`en`, `es`, `ca`, `eu`) |
 | `has_url_to_domain: { domains, allow_subdomains? }` | at least one URL host matches the allowlist (use `not:` for denylist) |
 | `mostly_uppercase: { min_ratio }` | fraction of letters that are uppercase ≥ `min_ratio` |
 | `token_entropy_above: { min_bits, min_token_len? }` | some whitespace-token of length ≥ `min_token_len` has Shannon entropy ≥ `min_bits` |
+| `word_contains_any: [...]` | whole-word substring match (Unicode word boundaries) |
+| `starts_with_any` / `ends_with_any: [...]` | prefix/suffix match against trimmed input |
+| `sentences: { min, max }` / `chars: { min, max }` / `lines: { min, max }` | shape gates |
+| `digit_ratio_above: { min_ratio }` / `punctuation_ratio_above: { min_ratio }` | character-class density gates |
+| `repeated_char_run: { min_run }` | catches `soooooo`, `!!!!!`, etc. |
+| `repeated_token: { min_count }` | same non-stopword token appears ≥ N times (copy-paste / spam) |
+| `type_token_ratio_below: { max_ratio }` | low lexical diversity (unique / total tokens) |
+| `has_invisible_chars` | zero-width / BOM-style chars (homoglyph / phishing) |
+| `has_mixed_script_token` | a single token mixes Unicode scripts (e.g. Cyrillic 'а' inside Latin "PayPal") |
+| `script_is: [...]` | input contains chars from any of: `latin`, `cyrillic`, `greek`, `han`, `hiragana`, `katakana`, `hangul`, `arabic`, `hebrew`, `devanagari`, `thai` |
+| `has_entity: { kind, min_count }` | adds `ip_address`, `credit_card` (Luhn-validated), `iban`, `date_iso`, `hashtag`, `mention`, `emoji` |
 | `semantic_match: { examples, threshold, language?, synonyms? }` | hashing-trick + per-language stem + synonym dict |
 | `all` / `any` / `not` / `always` | combinators |
 
@@ -128,7 +139,7 @@ cases:
 
 ## IR format
 
-Compiled `.iratxo` files are versioned: `IRTX` (4 bytes) | version: `u16` LE | bincode payload. Engines refuse blobs with a different magic or version, so old artifacts produce a clear error rather than corrupted behavior. See `IR_VERSION` in `iratxo-core/src/lib.rs`. Current version: **2** (added `has_url_to_domain`, `mostly_uppercase`, `token_entropy_above`).
+Compiled `.iratxo` files are versioned: `IRTX` (4 bytes) | version: `u16` LE | bincode payload. Engines refuse blobs with a different magic or version, so old artifacts produce a clear error rather than corrupted behavior. See `IR_VERSION` in `iratxo-core/src/lib.rs`. Current version: **3** (added Catalan to `Language`, new entity kinds — `ip_address`, `credit_card`, `iban`, `date_iso`, `hashtag`, `mention`, `emoji` — and 14 new heuristic predicates: `word_contains_any`, `starts_with_any`, `ends_with_any`, `sentences`, `chars`, `lines`, `digit_ratio_above`, `punctuation_ratio_above`, `repeated_char_run`, `repeated_token`, `type_token_ratio_below`, `has_invisible_chars`, `has_mixed_script_token`, `script_is`).
 
 ## Signing rule packs
 
@@ -152,7 +163,7 @@ Any host that can read/write linear memory (browser JS, Node, Cloudflare Workers
 
 ## Semantic match
 
-Multilingual: English, Spanish, Basque. Auto-detected from input by default; specify `language` to force.
+Multilingual: English, Spanish, Catalan, Basque. Auto-detected from input by default; specify `language` to force.
 
 ```yaml
 - id: intencion_cancelar
@@ -161,7 +172,7 @@ Multilingual: English, Spanish, Basque. Auto-detected from input by default; spe
       examples:
         - "el usuario quiere cancelar su contrato"
       threshold: 0.3
-      language: "es"               # en | es | eu | (omitted = auto)
+      language: "es"               # en | es | ca | eu | (omitted = auto)
       synonyms:                    # optional, layered over the built-in dict
         cancelar: ["terminar", "rescindir", "anular"]
         contrato: ["acuerdo", "convenio"]
@@ -173,6 +184,7 @@ Multilingual: English, Spanish, Basque. Auto-detected from input by default; spe
 
 **Stemmers:**
 - English / Spanish — Snowball (via [`rust-stemmers`](https://crates.io/crates/rust-stemmers)).
+- Catalan — hand-rolled light stemmer (`rust-stemmers` does not ship Catalan). Folds diacritics (`à è é í ï ò ó ú ü ç` → plain forms), strips the highest-frequency nominal/adjectival/verbal suffixes, and collapses orthographic `qu` → `c` so `polítiques` / `política` / `polítics` share a stem.
 - Basque — direct port of [marrow](https://github.com/enekos/marrow)'s implementation, validated against marrow's reference output on 850 words (100% parity, see `crates/iratxo-core/tests/basque_parity.rs`).
 
 **Score range:** 0.0–1.0. Realistic thresholds: 0.2 for sparse texts that share a single concept token after stemming, 0.3 for typical paragraph-length inputs, 0.4–0.5 for tight phrasing matches. Pure function, no embedded model file, no network.
