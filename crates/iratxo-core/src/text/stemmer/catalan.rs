@@ -20,7 +20,16 @@ const MIN_STEM: usize = 3;
 pub fn stem(word: &str) -> String {
     if word.is_empty() { return String::new(); }
     let folded: String = word.chars().map(fold_char).collect();
-    strip_suffix(&folded).to_string()
+    let stripped = strip_suffix(&folded);
+    // `qu` before a stripped front vowel is just an orthographic spelling of
+    // `c`; collapse so e.g. "polítiqu(es)" → "politic" matches "polític(s)".
+    if stripped.ends_with("qu") && stripped.len() > 3 {
+        let mut out = String::with_capacity(stripped.len() - 1);
+        out.push_str(&stripped[..stripped.len() - 2]);
+        out.push('c');
+        return out;
+    }
+    stripped.to_string()
 }
 
 fn fold_char(c: char) -> char {
@@ -70,7 +79,7 @@ fn strip_suffix(s: &str) -> &str {
         "at", "et", "it", "ut",
         "ar", "er", "ir",
         // articles, plurals, gender
-        "es", "is", "us",
+        "es",
         "a", "e", "o", "s",
     ];
 
