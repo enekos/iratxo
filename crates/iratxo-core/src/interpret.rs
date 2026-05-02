@@ -150,6 +150,7 @@ struct Ctx<'a> {
     entity_counts: RefCell<HashMap<EntityKind, usize>>,
     url_hosts: RefCell<Option<Vec<String>>>,
     lang: RefCell<Option<crate::text::Language>>,
+    semantic_embed: RefCell<HashMap<(crate::text::Language, u64), [f32; 256]>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -165,6 +166,7 @@ impl<'a> Ctx<'a> {
             entity_counts: RefCell::new(HashMap::new()),
             url_hosts: RefCell::new(None),
             lang: RefCell::new(None),
+            semantic_embed: RefCell::new(HashMap::new()),
         }
     }
 
@@ -181,6 +183,14 @@ impl<'a> Ctx<'a> {
         *cache.get_or_insert_with(|| {
             with_metrics(|m| m.language_detect_calls += 1);
             crate::text::detect_language(self.input)
+        })
+    }
+
+    fn semantic_embed(&self, lang: crate::text::Language, extra: Option<&semantic::SynonymIndex>, extra_hash: u64) -> [f32; 256] {
+        let mut cache = self.semantic_embed.borrow_mut();
+        let key = (lang, extra_hash);
+        *cache.entry(key).or_insert_with(|| {
+            semantic::embed_input(self.input, lang, extra)
         })
     }
 
@@ -351,8 +361,8 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
                 .and_then(crate::text::Language::from_code)
                 .unwrap_or_else(|| ctx.detect_language());
 
-            let extra_idx = if extra_synonyms.is_empty() {
-                None
+            let (extra_idx, extra_hash) = if extra_synonyms.is_empty() {
+                (None, 0u64)
             } else {
                 let mut json = String::from("{");
                 for (i, (canonical, syns)) in extra_synonyms.iter().enumerate() {
@@ -362,12 +372,16 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
                         serde_json::to_string(syns).unwrap()));
                 }
                 json.push('}');
-                Some(semantic::SynonymIndex::from_json_for(&json, lang))
+                // Cheap hash of the JSON for cache keying.
+                let h = semantic::fnv1a64(json.as_bytes());
+                (Some(semantic::SynonymIndex::from_json_for(&json, lang)), h)
             };
 
             with_metrics(|m| m.semantic_similarity_calls += examples.len() as u64);
+            let input_embed = ctx.semantic_embed(lang, extra_idx.as_ref(), extra_hash);
             examples.iter().any(|ex| {
-                semantic::similarity_lang(input, ex, lang, extra_idx.as_ref()) >= *threshold
+                let ex_embed = semantic::embed_input(ex, lang, extra_idx.as_ref());
+                semantic::cosine(&input_embed, &ex_embed) >= *threshold
             })
         }
 

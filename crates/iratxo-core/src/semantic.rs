@@ -89,6 +89,13 @@ pub fn similarity_lang(input: &str, example: &str, lang: Language, extra: Option
     })
 }
 
+/// Embed `text` for the given language and optional synonym dictionary.
+/// Useful for caching the input embedding when comparing against multiple
+/// examples.
+pub fn embed_input(text: &str, lang: Language, extra: Option<&SynonymIndex>) -> [f32; DIM] {
+    with_builtin(lang, |builtin| embed(text, lang, extra, builtin))
+}
+
 fn canonicalize_stem(stem: &str, extra: Option<&SynonymIndex>, builtin: &SynonymIndex) -> String {
     if let Some(idx) = extra {
         if let Some(c) = idx.map.get(stem) { return c.clone(); }
@@ -111,7 +118,8 @@ fn embed(text: &str, lang: Language, extra: Option<&SynonymIndex>, builtin: &Syn
     v
 }
 
-fn cosine(a: &[f32; DIM], b: &[f32; DIM]) -> f32 {
+/// Cosine similarity between two embeddings.
+pub fn cosine(a: &[f32; DIM], b: &[f32; DIM]) -> f32 {
     let mut dot = 0f32;
     let mut na = 0f32;
     let mut nb = 0f32;
@@ -124,7 +132,7 @@ fn cosine(a: &[f32; DIM], b: &[f32; DIM]) -> f32 {
     dot / (na.sqrt() * nb.sqrt())
 }
 
-fn fnv1a64(bytes: &[u8]) -> u64 {
+pub fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in bytes {
         h ^= *b as u64;
