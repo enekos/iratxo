@@ -82,7 +82,14 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
     let ctx = Ctx::new(input);
     let mut triggered: Vec<TriggeredRule> = Vec::new();
     let mut visited: HashSet<&str> = HashSet::new();
+    // Build a set of rule ids that are targets of `then` chains so we can
+    // skip evaluating them independently — they'll be reached via their parent.
+    let chained_targets: HashSet<&str> = program.rules
+        .iter()
+        .flat_map(|r| r.then.iter().map(|s| s.as_str()))
+        .collect();
     for rule in &program.rules {
+        if chained_targets.contains(rule.id.as_str()) { continue; }
         eval_rule(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
     }
 
@@ -140,6 +147,9 @@ fn eval_rule<'a>(
 struct Ctx<'a> {
     input: &'a str,
     lower: String,
+    entity_counts: RefCell<HashMap<EntityKind, usize>>,
+    url_hosts: RefCell<Option<Vec<String>>>,
+    lang: RefCell<Option<crate::text::Language>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -149,7 +159,13 @@ impl<'a> Ctx<'a> {
             m.lower_allocations += 1;
             m.lower_bytes += lower.len() as u64;
         });
-        Ctx { input, lower }
+        Ctx {
+            input,
+            lower,
+            entity_counts: RefCell::new(HashMap::new()),
+            url_hosts: RefCell::new(None),
+            lang: RefCell::new(None),
+        }
     }
 
     fn lower(&self) -> &str {
@@ -158,6 +174,31 @@ impl<'a> Ctx<'a> {
 
     fn regex(pattern: &str, case_sensitive: bool) -> Option<Regex> {
         regex_cache().get(pattern, case_sensitive)
+    }
+
+    fn detect_language(&self) -> crate::text::Language {
+        let mut cache = self.lang.borrow_mut();
+        *cache.get_or_insert_with(|| {
+            with_metrics(|m| m.language_detect_calls += 1);
+            crate::text::detect_language(self.input)
+        })
+    }
+
+    fn count_entities(&self, kind: EntityKind, min_count: u32) -> bool {
+        let mut cache = self.entity_counts.borrow_mut();
+        let count = *cache.entry(kind).or_insert_with(|| {
+            with_metrics(|m| m.entity_detection_calls += 1);
+            count_entities_impl(self.input, kind, min_count)
+        });
+        count >= min_count as usize
+    }
+
+    fn url_hosts(&self) -> Vec<String> {
+        let mut cache = self.url_hosts.borrow_mut();
+        cache.get_or_insert_with(|| {
+            with_metrics(|m| m.url_extract_calls += 1);
+            url_hosts_impl(self.input)
+        }).clone()
     }
 }
 
@@ -263,11 +304,10 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
 
         Predicate::HasSection { titles } => {
             with_metrics(|m| m.section_scan_calls += 1);
-            has_section(input, titles)
+            has_section(ctx, titles)
         }
         Predicate::HasEntity { kind, min_count } => {
-            with_metrics(|m| m.entity_detection_calls += 1);
-            count_entities(input, *kind) >= *min_count as usize
+            ctx.count_entities(*kind, *min_count)
         }
         Predicate::ParagraphCount { min, max } => {
             let n = paragraph_count(input);
@@ -275,14 +315,12 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         }
         Predicate::MaxWordsPerSentence { max } => max_words_per_sentence(input) <= *max as usize,
         Predicate::LanguageIs { codes } => {
-            with_metrics(|m| m.language_detect_calls += 1);
-            let detected = crate::text::detect_language(input).code();
+            let detected = ctx.detect_language().code();
             codes.iter().any(|c| c == detected)
         }
 
         Predicate::HasUrlToDomain { domains, allow_subdomains } => {
-            with_metrics(|m| m.url_extract_calls += 1);
-            url_hosts(input).iter().any(|host| {
+            ctx.url_hosts().iter().any(|host| {
                 domains.iter().any(|d| {
                     if host == d { return true; }
                     *allow_subdomains && host.ends_with(&format!(".{d}"))
@@ -308,11 +346,10 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         }
 
         Predicate::SemanticMatch { examples, threshold, extra_synonyms, language } => {
-            with_metrics(|m| m.language_detect_calls += 1);
             let lang = language
                 .as_deref()
                 .and_then(crate::text::Language::from_code)
-                .unwrap_or_else(|| crate::text::detect_language(input));
+                .unwrap_or_else(|| ctx.detect_language());
 
             let extra_idx = if extra_synonyms.is_empty() {
                 None
@@ -469,9 +506,9 @@ fn max_words_per_sentence(s: &str) -> usize {
 /// Recognises markdown `#`-style headings and `<h1>..<h6>` HTML headings.
 /// Title comparison is case-insensitive and trims whitespace.
 #[inline]
-fn has_section(input: &str, titles: &[String]) -> bool {
+fn has_section(ctx: &Ctx, titles: &[String]) -> bool {
     let wants: Vec<String> = titles.iter().map(|t| t.trim().to_lowercase()).collect();
-    for line in input.lines() {
+    for line in ctx.input.lines() {
         let trimmed = line.trim_start();
         if trimmed.starts_with('#') {
             // Strip leading '#' chars and a single space.
@@ -480,7 +517,8 @@ fn has_section(input: &str, titles: &[String]) -> bool {
         }
     }
     // Cheap HTML heading match: `<h1>Title</h1>` etc.
-    let lower = input.to_lowercase();
+    // Use ctx.lower() instead of re-lowercasing the whole input.
+    let lower = ctx.lower();
     for level in 1..=6 {
         let open = format!("<h{level}");
         let close = format!("</h{level}>");
@@ -524,7 +562,7 @@ fn strip_html_tags(s: &str) -> String {
 /// Strips userinfo, port, and trailing path. Robust enough for predicate use,
 /// not a general URL parser.
 #[inline]
-fn url_hosts(input: &str) -> Vec<String> {
+fn url_hosts_impl(input: &str) -> Vec<String> {
     use std::sync::OnceLock;
     static URL: OnceLock<Regex> = OnceLock::new();
     let re = URL.get_or_init(|| Regex::new(r"(?i)\bhttps?://([^\s/?#]+)").unwrap());
@@ -555,7 +593,7 @@ fn shannon_entropy(s: &str) -> f32 {
 }
 
 #[inline]
-fn count_entities(input: &str, kind: EntityKind) -> usize {
+fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
     use std::sync::OnceLock;
     static EMAIL:   OnceLock<Regex> = OnceLock::new();
     static PHONE:   OnceLock<Regex> = OnceLock::new();
@@ -567,14 +605,34 @@ fn count_entities(input: &str, kind: EntityKind) -> usize {
     static DATE:    OnceLock<Regex> = OnceLock::new();
     static HASHTAG: OnceLock<Regex> = OnceLock::new();
     static MENTION: OnceLock<Regex> = OnceLock::new();
+    // Fast path: if we only need >=1 match, use short-circuiting operations.
+    let need_one = min_count <= 1;
     match kind {
-        EntityKind::Email    => EMAIL.get_or_init(|| Regex::new(r"(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b").unwrap()).find_iter(input).count(),
-        EntityKind::Phone    => PHONE.get_or_init(|| Regex::new(r"\b(?:\+?\d{1,3}[\s\-.]?)?(?:\(?\d{2,4}\)?[\s\-.]?){2,4}\d{2,4}\b").unwrap()).find_iter(input).count(),
-        EntityKind::Url      => URL.get_or_init(|| Regex::new(r"(?i)\bhttps?://[a-z0-9.\-]+(?:/[^\s]*)?").unwrap()).find_iter(input).count(),
-        EntityKind::Currency => CURR.get_or_init(|| Regex::new(r"(?:[\$£€¥]\s?\d{1,3}(?:[,.]\d{3})*(?:\.\d+)?|\b\d+(?:[.,]\d+)?\s?(?:USD|EUR|GBP|JPY)\b)").unwrap()).find_iter(input).count(),
+        EntityKind::Email    => {
+            let re = EMAIL.get_or_init(|| Regex::new(r"(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b").unwrap());
+            if need_one { return re.is_match(input) as usize; }
+            re.find_iter(input).count()
+        }
+        EntityKind::Phone    => {
+            let re = PHONE.get_or_init(|| Regex::new(r"\b(?:\+?\d{1,3}[\s\-.]?)?(?:\(?\d{2,4}\)?[\s\-.]?){2,4}\d{2,4}\b").unwrap());
+            if need_one { return re.is_match(input) as usize; }
+            re.find_iter(input).count()
+        }
+        EntityKind::Url      => {
+            let re = URL.get_or_init(|| Regex::new(r"(?i)\bhttps?://[a-z0-9.\-]+(?:/[^\s]*)?").unwrap());
+            if need_one { return re.is_match(input) as usize; }
+            re.find_iter(input).count()
+        }
+        EntityKind::Currency => {
+            let re = CURR.get_or_init(|| Regex::new(r"(?:[\$£€¥]\s?\d{1,3}(?:[,.]\d{3})*(?:\.\d+)?|\b\d+(?:[.,]\d+)?\s?(?:USD|EUR|GBP|JPY)\b)").unwrap());
+            if need_one { return re.is_match(input) as usize; }
+            re.find_iter(input).count()
+        }
         EntityKind::IpAddress => {
-            // IPv4 with octet range check, plus a permissive IPv6 form.
             let v4 = IP.get_or_init(|| Regex::new(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})\b").unwrap());
+            if need_one {
+                return (v4.is_match(input) || input.split_whitespace().any(|tok| looks_like_ipv6(tok.trim_matches(|c: char| !c.is_alphanumeric() && c != ':')))) as usize;
+            }
             let v6_count = input.split_whitespace()
                 .filter(|tok| looks_like_ipv6(tok.trim_matches(|c: char| !c.is_alphanumeric() && c != ':')))
                 .count();
@@ -582,16 +640,33 @@ fn count_entities(input: &str, kind: EntityKind) -> usize {
         }
         EntityKind::CreditCard => {
             let re = CARD.get_or_init(|| Regex::new(r"\b(?:\d[ -]?){13,19}\b").unwrap());
+            if need_one { return re.find(input).map_or(0, |m| luhn_check(m.as_str()) as usize); }
             re.find_iter(input).filter(|m| luhn_check(m.as_str())).count()
         }
         EntityKind::Iban => {
             let re = IBAN.get_or_init(|| Regex::new(r"(?i)\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b").unwrap());
+            if need_one { return re.is_match(input) as usize; }
             re.find_iter(input).count()
         }
-        EntityKind::DateIso  => DATE.get_or_init(|| Regex::new(r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b").unwrap()).find_iter(input).count(),
-        EntityKind::Hashtag  => HASHTAG.get_or_init(|| Regex::new(r"(?:^|[\s(\[{,;:])#[A-Za-z][\w]{0,49}").unwrap()).find_iter(input).count(),
-        EntityKind::Mention  => MENTION.get_or_init(|| Regex::new(r"(?:^|[\s(\[{,;:])@[A-Za-z0-9_][\w.\-]{0,49}").unwrap()).find_iter(input).count(),
-        EntityKind::Emoji    => input.chars().filter(|c| is_emoji_char(*c)).count(),
+        EntityKind::DateIso  => {
+            let re = DATE.get_or_init(|| Regex::new(r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b").unwrap());
+            if need_one { return re.is_match(input) as usize; }
+            re.find_iter(input).count()
+        }
+        EntityKind::Hashtag  => {
+            let re = HASHTAG.get_or_init(|| Regex::new(r"(?:^|[\s(\[{,;:])#[A-Za-z][\w]{0,49}").unwrap());
+            if need_one { return re.is_match(input) as usize; }
+            re.find_iter(input).count()
+        }
+        EntityKind::Mention  => {
+            let re = MENTION.get_or_init(|| Regex::new(r"(?:^|[\s(\[{,;:])@[A-Za-z0-9_][\w.\-]{0,49}").unwrap());
+            if need_one { return re.is_match(input) as usize; }
+            re.find_iter(input).count()
+        }
+        EntityKind::Emoji    => {
+            if need_one { return input.chars().any(is_emoji_char) as usize; }
+            input.chars().filter(|c| is_emoji_char(*c)).count()
+        }
     }
 }
 

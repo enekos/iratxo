@@ -118,7 +118,7 @@ pub enum Predicate {
     Always,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EntityKind {
     Email,
     Phone,
