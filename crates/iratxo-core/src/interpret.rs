@@ -333,7 +333,13 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             ctx.url_hosts().iter().any(|host| {
                 domains.iter().any(|d| {
                     if host == d { return true; }
-                    *allow_subdomains && host.ends_with(&format!(".{d}"))
+                    if !*allow_subdomains { return false; }
+                    // Avoid format!(".{d}") allocation.
+                    let host_bytes = host.as_bytes();
+                    let d_bytes = d.as_bytes();
+                    if host_bytes.len() <= d_bytes.len() + 1 { return false; }
+                    let prefix = host_bytes.len() - d_bytes.len() - 1;
+                    host_bytes[prefix] == b'.' && &host_bytes[prefix + 1..] == d_bytes
                 })
             })
         }
