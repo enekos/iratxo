@@ -19,3 +19,7 @@ criterion = { version = "0.5", default-features = false, features = ["html_repor
 [[bench]]
 name = "engine"
 harness = false
+
+[[bench]]
+name = "complex_rules"
+harness = false

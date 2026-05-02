@@ -1,0 +1,228 @@
+cases:
+  # ===================================================
+  # ENGLISH
+  # ===================================================
+
+  # ---- simple baseline ----
+
+  - name: en short clean prose stays simple
+    input: |
+      The cat sat on the mat. It was warm. Outside, the rain stopped.
+    expect: { classify: simple }
+
+  - name: en plain technical prose stays simple
+    input: |
+      We added a new index on the orders table. Queries are faster now.
+      Lookups by customer id no longer scan every row.
+    expect: { classify: simple }
+
+  - name: en short news prose stays simple
+    input: |
+      The mayor announced the new park yesterday. It opens in May.
+      Local kids helped pick the name.
+    expect: { classify: simple }
+
+  # ---- moderate ----
+
+  - name: en long sentence trips moderate
+    input: "The committee considered the proposal during last Tuesday's meeting and decided that the next steps would involve consulting with the regional team before any further action could be taken."
+    expect: { classify: moderate_complexity, triggers: [long_sentence_en] }
+
+  - name: en hedging connectors trip moderate
+    input: |
+      The plan looks reasonable. Moreover, it addresses the budget.
+      Furthermore, the timeline is realistic. Nevertheless, risks remain.
+    expect: { classify: moderate_complexity, triggers: [hedging_connector_overload_en] }
+
+  - name: en modal stacking trips moderate
+    input: |
+      The proposal might possibly succeed in the long run. We could arguably
+      accept the trade-offs, though they may potentially affect timing.
+    expect: { classify: moderate_complexity, triggers: [modal_epistemic_stacking_en] }
+
+  - name: en passive cluster trips moderate
+    input: "The report was reviewed by the committee and the recommendations were approved by the board after the proposal was submitted."
+    expect: { classify: moderate_complexity, triggers: [passive_voice_cluster_en] }
+
+  - name: en negation density trips moderate
+    input: "It is not unlikely that the outcome will not satisfy the stakeholders, since no resolution can be reached without further input."
+    expect: { classify: moderate_complexity, triggers: [negation_density_en] }
+
+  - name: en parenthetical pile-up trips moderate
+    input: "The report (which we received last week) covers three sites — Madrid, Berlin, and Lisbon — and includes (per the new template) a risk register."
+    expect: { classify: moderate_complexity, triggers: [parenthetical_pile_up] }
+
+  - name: en referential cohesion gap trips moderate
+    input: |
+      The committee reviewed the brief. The former had concerns; the latter
+      did not. The aforementioned issues remain unresolved at this time.
+    expect: { classify: moderate_complexity, triggers: [cohesion_gap_referential_en] }
+
+  # ---- high ----
+
+  - name: en very long sentence escalates to high
+    input: "When the regional working group convened last Tuesday under the chairmanship of the deputy director and reviewed the latest quarterly figures alongside the supplementary briefing materials that had been circulated the previous week, several members raised concerns that warranted immediate follow-up."
+    expect: { classify: high_complexity, triggers: [very_long_sentence_en] }
+
+  - name: en heavy nominalization escalates to high
+    input: "The implementation of the standardization framework requires the coordination of departmental optimization initiatives and the operationalization of cross-functional governance mechanisms."
+    expect: { classify: high_complexity }
+
+  - name: en stacked relative clauses escalate to high
+    input: "We hired the consultant, who had previously advised the regional office, which had recently restructured, and recommended a new approach."
+    expect: { classify: high_complexity, triggers: [subordinate_clause_cascade_en] }
+
+  - name: en long-word cluster escalates to high
+    input: "The institutionalization of intergovernmental decentralization mechanisms remains controversial."
+    expect: { classify: high_complexity }
+
+  - name: en genitive cascade escalates to high
+    input: "The dynamics of the evolution of the regulation of the financial markets has shifted."
+    expect: { classify: high_complexity, triggers: [genitive_cascade_en] }
+
+  - name: en counterfactual escalates to high
+    input: "Had the committee acted sooner, the outcome would have been resolved without further delay; were the board to reconsider, this could have been avoided."
+    expect: { classify: high_complexity }
+
+  - name: en logical-operator density escalates to high
+    input: "The clause applies if and only if the parties have signed and provided that the notice has been delivered, insofar as the deadline has not lapsed."
+    expect: { classify: high_complexity, triggers: [logical_operator_dense_en] }
+
+  # ---- very high ----
+
+  - name: en legalese plus length hits very high
+    input: |
+      Notwithstanding any provision to the contrary contained in the aforementioned agreement, and pursuant to the obligations hereinafter set forth, the parties hereby acknowledge that performance under this arrangement shall be governed by the cumulative effect of the schedules attached hereto. For the avoidance of doubt, the aforementioned obligations shall remain in force throughout the duration of the engagement.
+    expect: { classify: very_high_complexity, triggers: [dense_legalese_register_en], confidence_min: 0.9 }
+
+  - name: en academic register plus length hits very high
+    input: |
+      The theoretical framework underlying the conceptualization of these phenomena necessitates a systematic interrogation of the prevailing assumptions about institutional legitimacy and the epistemological presuppositions that undergird contemporary discourse. This paper interrogates the methodological implications of operationalizing such constructs and warrants a comprehensive reconsideration of the normative paradigm that has guided prior empirical work.
+    expect: { classify: very_high_complexity, confidence_min: 0.9 }
+
+  - name: en single giant paragraph hits very high
+    input: "The annual review highlighted several intersecting concerns about the program's trajectory, ranging from the slower-than-expected uptake among partner organizations to the persistent gaps in reporting fidelity that had been flagged repeatedly throughout the prior twelve months. Compounding these issues, the steering committee had not formally revisited the original success metrics since the program's inception three years earlier, which made it increasingly difficult to determine whether observed shortfalls reflected execution problems or simply the natural drift of priorities over time. Stakeholders consulted during the review expressed a wide range of views about how to proceed, with some advocating a wholesale redesign and others favoring a more incremental approach centered on tightening the existing operational cadence and reinforcing accountability at the team level."
+    expect: { classify: very_high_complexity, triggers: [run_on_wall_of_text] }
+
+  # ===================================================
+  # SPANISH
+  # ===================================================
+
+  - name: es short clean prose stays simple
+    input: |
+      El gato está sobre la alfombra. Hace calor. Fuera dejó de llover.
+    expect: { classify: simple }
+
+  - name: es long sentence trips moderate
+    input: "El comité estudió la propuesta durante la reunión del martes pasado y decidió que los próximos pasos pasarían por consultar al equipo regional antes de tomar ninguna decisión definitiva sobre el asunto."
+    expect: { classify: moderate_complexity, triggers: [long_sentence_es] }
+
+  - name: es hedging connectors trip moderate
+    input: |
+      El plan parece razonable. No obstante, hay riesgos. Asimismo, el calendario es ajustado.
+      Por consiguiente, conviene revisarlo. Sin embargo, hemos avanzado mucho.
+    expect: { classify: moderate_complexity, triggers: [hedging_connector_overload_es] }
+
+  - name: es modal stacking trips moderate
+    input: |
+      La propuesta podría posiblemente prosperar a largo plazo. Quizás aceptemos las
+      contrapartidas, aunque podrían eventualmente afectar al cronograma de ejecución.
+    expect: { classify: moderate_complexity, triggers: [modal_epistemic_stacking_es] }
+
+  - name: es heavy nominalization escalates to high
+    input: "La implementación del marco de estandarización exige la coordinación de las iniciativas de optimización departamental y la operacionalización de los mecanismos transversales de gobernanza."
+    expect: { classify: high_complexity }
+
+  - name: es genitive cascade escalates to high
+    input: "La dinámica de la evolución de la regulación de los mercados financieros ha cambiado de forma significativa este año."
+    expect: { classify: high_complexity, triggers: [genitive_cascade_es] }
+
+  - name: es logical operators escalate to high
+    input: "La cláusula resulta de aplicación siempre y cuando las partes hayan firmado y a condición de que la notificación se haya remitido, salvo que el plazo hubiera caducado."
+    expect: { classify: high_complexity, triggers: [logical_operator_dense_es] }
+
+  - name: es legalese plus length hits very high
+    input: |
+      No obstante lo dispuesto en la cláusula precedente, y en virtud del presente contrato, las partes acuerdan que el incumplimiento de las obligaciones aquí contenidas dará lugar a la resolución del mismo, sin perjuicio de las acciones que pudieran corresponder. A los efectos oportunos, queda obligada la parte arrendataria al pago de las cantidades que, en su caso, resulten de la liquidación.
+    expect: { classify: very_high_complexity, triggers: [dense_legalese_register_es], confidence_min: 0.9 }
+
+  - name: es academic register hits very high
+    input: |
+      El marco teórico subyacente a la conceptualización de estos fenómenos exige una interrogación sistemática de los presupuestos epistemológicos prevalecientes en el discurso contemporáneo sobre la legitimidad institucional. El presente trabajo problematiza las implicaciones metodológicas de operacionalizar dichas construcciones y propone una reconsideración integral del paradigma normativo que ha orientado los estudios empíricos previos.
+    expect: { classify: very_high_complexity, confidence_min: 0.9 }
+
+  # ===================================================
+  # CATALAN
+  # ===================================================
+
+  - name: ca short clean prose stays simple
+    input: |
+      El gat està a la catifa. Fa calor. A fora ha parat de ploure.
+    expect: { classify: simple }
+
+  - name: ca long sentence trips moderate
+    input: "El comitè va estudiar la proposta durant la reunió del dimarts passat i va decidir que els propers passos passarien per consultar l'equip regional abans de prendre cap decisió definitiva sobre l'assumpte."
+    expect: { classify: moderate_complexity, triggers: [long_sentence_ca] }
+
+  - name: ca hedging connectors trip moderate
+    input: |
+      El pla sembla raonable. No obstant això, hi ha riscos. Tanmateix, el calendari és ajustat.
+      Per consegüent, convé revisar-lo. Així mateix, hem avançat molt.
+    expect: { classify: moderate_complexity, triggers: [hedging_connector_overload_ca] }
+
+  - name: ca modal stacking trips moderate
+    input: |
+      La proposta podria possiblement prosperar a llarg termini. Potser acceptarem
+      les contrapartides, encara que podrien eventualment afectar el calendari.
+    expect: { classify: moderate_complexity, triggers: [modal_epistemic_stacking_ca] }
+
+  - name: ca heavy nominalization escalates to high
+    input: "La implementació del marc d'estandardització exigeix la coordinació de les iniciatives d'optimització departamental i l'operacionalització dels mecanismes transversals de governança organitzativa."
+    expect: { classify: high_complexity }
+
+  - name: ca genitive cascade escalates to high
+    input: "La dinàmica de l'evolució de la regulació dels mercats financers ha canviat de manera significativa aquest darrer any."
+    expect: { classify: high_complexity, triggers: [genitive_cascade_ca] }
+
+  - name: ca logical operators escalate to high
+    input: "La clàusula s'aplica sempre que les parts hagin signat i a condició que la notificació s'hagi tramès, tret que el termini hagués caducat."
+    expect: { classify: high_complexity, triggers: [logical_operator_dense_ca] }
+
+  - name: ca legalese plus length hits very high
+    input: |
+      No obstant això, i en virtut del present contracte, les parts acorden que l'incompliment de les obligacions ací contingudes donarà lloc a la resolució del mateix, sens perjudici de les accions que puguin correspondre. A tal efecte, la part arrendatària queda obligada al pagament de les quantitats que, si escau, resultin de la liquidació.
+    expect: { classify: very_high_complexity, triggers: [dense_legalese_register_ca], confidence_min: 0.9 }
+
+  - name: ca academic register hits very high
+    input: |
+      El marc teòric que sosté la conceptualització d'aquests fenòmens exigeix una interrogació sistemàtica dels pressupòsits epistemològics que sostenen el discurs contemporani sobre la legitimitat institucional. Aquest treball problematitza les implicacions metodològiques d'operacionalitzar aquestes construccions i proposa una reconsideració integral del paradigma normatiu que ha orientat els estudis empírics previs.
+    expect: { classify: very_high_complexity, confidence_min: 0.9 }
+
+  # ===================================================
+  # BASQUE
+  # ===================================================
+
+  - name: eu short clean prose stays simple
+    input: |
+      Katua alfonbra gainean dago. Bero egiten du. Kanpoan euria gelditu da.
+    expect: { classify: simple }
+
+  - name: eu long sentence trips moderate
+    input: "Batzordeak proposamena aztertu zuen joan den asteartean eta erabaki zuen hurrengo urratsek eskualdeko taldearekin kontsulta sakona egitea ekarriko zutela edozein erabaki definitibo hartu aurretik, kontuan hartuta gaiaren konplexutasuna eta inplikatutako alderdien iritziak."
+    expect: { classify: moderate_complexity, triggers: [long_sentence_eu] }
+
+  - name: eu hedging connectors trip moderate
+    input: |
+      Plana zentzuzkoa dirudi. Halaber, badaude arrisku batzuk. Hala ere, egutegia estua da.
+      Horrenbestez, berrikustea komeni da. Hortaz, badago zer zaindurik.
+    expect: { classify: moderate_complexity, triggers: [hedging_connector_overload_eu] }
+
+  - name: eu legalese plus length hits very high
+    input: |
+      Halaber, kontratu honen klausula guztiak indarrean egongo dira aldeen artean adostutako epea amaitu arte, eta legearen arabera betebeharren urraketak kontratuaren suntsiarazpena ekarriko du, kalterik gabe alde betetzaileak hartu ahal izango dituen bestelako neurriei dagokienez. Aipatutako klausulan ezarritakoaren ondorioz, alde betetzaileak kalte-galerak eskatu ahal izango ditu.
+    expect: { classify: very_high_complexity, triggers: [dense_legalese_register_eu], confidence_min: 0.9 }
+
+  - name: eu academic register hits very high
+    input: |
+      Marko teorikoaren oinarrian dagoen kontzeptualizazioak fenomeno hauen aurrean nagusi diren aurresuposatuak galdekatzera behartzen gaitu, eta lan honek diskurtso garaikidearen oinarri epistemologikoak zalantzan jartzen ditu legitimitate instituzionalaren inguruan. Metodologia mailan ondorioak izan ditzaten eraikuntza horiek operazionalizatzeak paradigma normatiboaren berrikuspen sakona eskatzen du azken hamarkadetan egindako lan enpirikoen ildotik.
+    expect: { classify: very_high_complexity, confidence_min: 0.9 }

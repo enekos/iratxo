@@ -1,0 +1,958 @@
+name: semantic_complexity
+description: |
+  Multilingual, multi-dimensional detector for semantic complexity. Goes
+  beyond surface heuristics (sentence length, word count) and analyzes:
+
+    1. Register — does the prose adopt an academic / legalese / bureaucratic
+       voice? Detected with semantic_match corpora that capture each register.
+    2. Abstraction density — heavy nominalization, abstract noun endings,
+       and Latin/Greek-derived long words.
+    3. Syntactic load — stacked subordinate clauses, genitive cascades
+       ("X of Y of Z"), embedded relative clauses, parentheticals.
+    4. Modal / epistemic stacking — clusters of hedges (may, might, could,
+       would, possibly, arguably) that compound qualifications.
+    5. Negation density — multiple negations or double negatives in one
+       window.
+    6. Logical-operator load — propositional connectives (unless, provided
+       that, insofar as, if and only if) that demand inferential parsing.
+    7. Cohesion gaps — referential pronouns / demonstratives whose
+       antecedents aren't immediately local ("the former", "the aforementioned",
+       chains of "this/that/it").
+    8. Counterfactual / subjunctive structure — "had he known", "would
+       have been", which require modeling alternative worlds.
+    9. Passive voice clustering — multiple passive constructions in
+       proximity.
+   10. Information density structural cues — long sentences, run-on
+       paragraphs, punctuation-rich prose.
+
+  Languages covered: English (en), Spanish (es), Catalan (ca), Basque (eu).
+  Each language has its own register corpora, nominalization patterns,
+  hedging connectors, modal / logical operators, and structural gates.
+  Highest-confidence rule wins. Compound rules (multiple signals coinciding)
+  fire at high/very_high tiers; individual signals fire at moderate.
+
+rules:
+  # ============================================================
+  # ============== UNIVERSAL STRUCTURAL =========================
+  # ============================================================
+
+  - id: run_on_wall_of_text
+    when:
+      all:
+        - language_is: ["en", "es", "ca", "eu"]
+        - chars: { min: 600 }
+        - paragraphs: { max: 1 }
+        - not: { max_words_per_sentence: 35 }
+    classify: very_high_complexity
+    confidence: 0.9
+    explanation: "Single paragraph over 600 chars with sentences exceeding 35 words."
+
+  - id: punctuation_heavy
+    when:
+      all:
+        - language_is: ["en", "es", "ca", "eu"]
+        - chars: { min: 200 }
+        - punctuation_ratio_above: { min_ratio: 0.06 }
+    classify: moderate_complexity
+    confidence: 0.55
+    explanation: "Punctuation-dense prose (many commas / semicolons / parentheticals)."
+
+  - id: parenthetical_pile_up
+    when:
+      all:
+        - language_is: ["en", "es", "ca", "eu"]
+        - regex: "(?ui)[\\(—–][\\s\\S]{1,80}?[\\)—–][\\s\\S]{0,200}?[\\(—–][\\s\\S]{1,80}?[\\)—–]"
+    classify: moderate_complexity
+    confidence: 0.55
+    explanation: "Multiple parenthetical / em-dash asides — embedded structure."
+
+  # ============================================================
+  # ====================== ENGLISH ==============================
+  # ============================================================
+
+  # ---------- VERY HIGH ----------
+
+  - id: dense_legalese_register_en
+    when:
+      all:
+        - language_is: ["en"]
+        - chars: { min: 200 }
+        - any:
+            - contains_any:
+                - "notwithstanding"
+                - "hereinafter"
+                - "aforementioned"
+                - "whereby"
+                - "heretofore"
+                - "thereof"
+                - "hereunder"
+                - "hereto"
+                - "herewith"
+                - "thereto"
+                - "therein"
+                - "pursuant to"
+                - "in accordance with"
+                - "for the avoidance of doubt"
+                - "subject to the foregoing"
+                - "without prejudice"
+                - "save as otherwise"
+                - "with respect to"
+                - "by virtue of"
+                - "to the extent permitted"
+                - "for the purposes of this agreement"
+                - "shall be deemed"
+                - "as set forth herein"
+            - semantic_match:
+                examples:
+                  - "pursuant to the aforementioned contractual obligations the parties hereby agree"
+                  - "notwithstanding any provision to the contrary contained herein the parties acknowledge"
+                  - "subject to the terms and conditions hereinafter set forth the obligations shall remain"
+                  - "the indemnifying party shall hold harmless the indemnified party from any and all claims"
+                  - "in the event of a material breach the non-breaching party may terminate this agreement"
+                  - "for the purposes of this agreement the term shall mean and include the following"
+                  - "the parties hereto acknowledge and agree that the foregoing constitutes the entire understanding"
+                  - "without limiting the generality of the foregoing the obligations set forth in section three"
+                threshold: 0.3
+                language: "en"
+        - any:
+            - not: { max_words_per_sentence: 28 }
+            - regex: "(?ui)\\b\\w{6,}(tion|ment|ance|ence|ity)\\b[\\s\\S]{0,120}?\\b\\w{6,}(tion|ment|ance|ence|ity)\\b"
+    classify: very_high_complexity
+    confidence: 0.95
+    explanation: "Legalese register paired with long sentences or abstract-noun clustering."
+
+  - id: dense_academic_register_en
+    when:
+      all:
+        - language_is: ["en"]
+        - chars: { min: 250 }
+        - semantic_match:
+            examples:
+              - "the theoretical framework underlying the conceptualization of these phenomena necessitates a systematic interrogation of the prevailing assumptions"
+              - "this paper interrogates the epistemological presuppositions that undergird contemporary discourse around institutional legitimacy"
+              - "the methodological implications of operationalizing these constructs warrant a comprehensive reconsideration of the normative paradigm"
+              - "drawing on a poststructuralist tradition we problematize the ostensibly neutral categories that structure prevailing accounts"
+              - "the empirical findings reported herein extend prior work by triangulating qualitative evidence with longitudinal panel data"
+              - "we contend that the dominant ontological commitments of the literature obscure the constitutive role of agency in producing observed regularities"
+              - "this analysis adopts a critical realist perspective to disentangle the underlying mechanisms from their contingent surface manifestations"
+              - "subsequent sections delineate the conceptual architecture before proceeding to the operationalization of the explanatory variables"
+            threshold: 0.3
+            language: "en"
+        - any:
+            - not: { max_words_per_sentence: 25 }
+            - regex: "(?ui)\\b\\w{6,}(tion|ment|ance|ence|ity|ization|isation)\\b[\\s\\S]{0,120}?\\b\\w{6,}(tion|ment|ance|ence|ity|ization|isation)\\b[\\s\\S]{0,120}?\\b\\w{6,}(tion|ment|ance|ence|ity|ization|isation)\\b"
+    classify: very_high_complexity
+    confidence: 0.93
+    explanation: "Academic / theoretical register with abstract-noun pile-up or long sentences."
+
+  - id: dense_bureaucratic_register_en
+    when:
+      all:
+        - language_is: ["en"]
+        - chars: { min: 200 }
+        - semantic_match:
+            examples:
+              - "the implementation of the standardization framework requires the coordination of cross-functional governance mechanisms across all relevant stakeholder groups"
+              - "operationalization of the strategic prioritization initiative necessitates alignment with established procedural workflows"
+              - "the optimization of resource allocation mandates a comprehensive reassessment of organizational performance indicators"
+              - "stakeholder engagement throughout the deliverables lifecycle ensures alignment with enterprise-wide transformation objectives"
+              - "the rollout of the modernization roadmap is contingent upon the successful institutionalization of the underlying capability uplift"
+              - "the review framework establishes accountability through standardized reporting cadences and tiered escalation pathways"
+              - "the program's value realization depends on the systemic integration of cross-portfolio dependencies and the harmonization of delivery cadences"
+              - "this initiative leverages best-practice methodologies to drive sustainable operationalization of the transformation agenda"
+            threshold: 0.3
+            language: "en"
+        - any:
+            - not: { max_words_per_sentence: 28 }
+            - regex: "(?ui)\\b\\w{6,}(tion|ment|ance|ence|ity|ization|isation)\\b[\\s\\S]{0,120}?\\b\\w{6,}(tion|ment|ance|ence|ity|ization|isation)\\b[\\s\\S]{0,120}?\\b\\w{6,}(tion|ment|ance|ence|ity|ization|isation)\\b"
+    classify: very_high_complexity
+    confidence: 0.92
+    explanation: "Bureaucratic register with abstract-noun pile-up or long sentences."
+
+  # ---------- HIGH ----------
+
+  - id: very_long_sentence_en
+    when:
+      all:
+        - language_is: ["en"]
+        - not: { max_words_per_sentence: 40 }
+    classify: high_complexity
+    confidence: 0.85
+    explanation: "Contains a sentence longer than 40 words."
+
+  - id: nominalization_heavy_en
+    when:
+      all:
+        - language_is: ["en"]
+        - regex: "(?ui)\\b\\w{6,}(tion|ment|ance|ence|ity|ization|isation)\\b[\\s\\S]{0,120}?\\b\\w{6,}(tion|ment|ance|ence|ity|ization|isation)\\b[\\s\\S]{0,120}?\\b\\w{6,}(tion|ment|ance|ence|ity|ization|isation)\\b"
+    classify: high_complexity
+    confidence: 0.82
+    explanation: "Heavy nominalization (≥3 abstract noun endings clustered)."
+
+  - id: subordinate_clause_cascade_en
+    when:
+      all:
+        - language_is: ["en"]
+        - regex: "(?ui),\\s+(which|who|whom|whose|that)\\s+[^.!?,]{3,}?,\\s+(which|who|whom|whose|that|and|but)\\s+"
+    classify: high_complexity
+    confidence: 0.8
+    explanation: "Stacked relative clauses inside one sentence."
+
+  - id: long_word_cluster_en
+    when:
+      all:
+        - language_is: ["en"]
+        - regex: "(?ui)\\b[a-z]{13,}\\b[\\s\\S]{0,100}?\\b[a-z]{13,}\\b[\\s\\S]{0,100}?\\b[a-z]{13,}\\b"
+    classify: high_complexity
+    confidence: 0.78
+    explanation: "Cluster of three or more very long words (Latin/Greek-derived vocabulary)."
+
+  - id: genitive_cascade_en
+    when:
+      all:
+        - language_is: ["en"]
+        - regex: "(?ui)\\b(of|for)\\s+(the\\s+)?\\w{4,}\\s+(of|for)\\s+(the\\s+)?\\w{4,}\\s+(of|for)\\s+(the\\s+)?\\w{4,}\\b"
+    classify: high_complexity
+    confidence: 0.78
+    explanation: "Genitive cascade — three or more chained 'X of Y of Z' constructions."
+
+  - id: counterfactual_subjunctive_en
+    when:
+      all:
+        - language_is: ["en"]
+        - chars: { min: 100 }
+        - any:
+            - regex: "(?ui)\\b(would|could|might|should)\\s+have\\s+been\\s+\\w+ed\\b"
+            - regex: "(?ui)\\bhad\\s+(he|she|they|it|the\\s+\\w+|we|i|you)\\s+(\\w+\\s+){0,3}\\w+ed\\b"
+            - regex: "(?ui)\\bwere\\s+(he|she|they|it|we|i|you)\\s+to\\s+\\w+\\b"
+    classify: high_complexity
+    confidence: 0.75
+    explanation: "Counterfactual / subjunctive construction (alternative-world reasoning)."
+
+  - id: logical_operator_dense_en
+    when:
+      all:
+        - language_is: ["en"]
+        - any:
+            - contains_any:
+                - "if and only if"
+                - "provided that"
+                - "subject to the condition"
+                - "to the extent that"
+                - "insofar as"
+                - "inasmuch as"
+                - "save where"
+                - "except insofar as"
+            - regex: "(?ui)\\b(unless|provided)\\b[\\s\\S]{0,150}?\\b(and|or)\\b[\\s\\S]{0,150}?\\b(unless|provided|except)\\b"
+    classify: high_complexity
+    confidence: 0.75
+    explanation: "Dense logical / propositional operators requiring inferential parsing."
+
+  # ---------- MODERATE ----------
+
+  - id: long_sentence_en
+    when:
+      all:
+        - language_is: ["en"]
+        - not: { max_words_per_sentence: 28 }
+    classify: moderate_complexity
+    confidence: 0.65
+    explanation: "Contains a sentence longer than 28 words."
+
+  - id: hedging_connector_overload_en
+    when:
+      all:
+        - language_is: ["en"]
+        - any:
+            - contains_any:
+                - "moreover"
+                - "furthermore"
+                - "nevertheless"
+                - "nonetheless"
+                - "consequently"
+                - "accordingly"
+                - "henceforth"
+                - "thereby"
+                - "thus far"
+            - regex: "(?ui)\\b(however|moreover|furthermore|nevertheless|nonetheless|consequently)\\b[\\s\\S]{0,200}?\\b(however|moreover|furthermore|nevertheless|nonetheless|consequently|accordingly)\\b"
+    classify: moderate_complexity
+    confidence: 0.62
+    explanation: "Bureaucratic / hedging connectors signal heavier register."
+
+  - id: modal_epistemic_stacking_en
+    when:
+      all:
+        - language_is: ["en"]
+        - regex: "(?ui)\\b(may|might|could|would|should)\\b[\\s\\S]{0,80}?\\b(possibly|arguably|presumably|conceivably|potentially|ostensibly|seemingly|allegedly)\\b"
+    classify: moderate_complexity
+    confidence: 0.6
+    explanation: "Stacked modal + epistemic hedges (qualified-on-qualified claims)."
+
+  - id: passive_voice_cluster_en
+    when:
+      all:
+        - language_is: ["en"]
+        - regex: "(?ui)\\b(is|are|was|were|been|being|be)\\s+(\\w+ly\\s+)?[a-z]+(ed|en)\\b[\\s\\S]{0,150}?\\b(is|are|was|were|been|being|be)\\s+(\\w+ly\\s+)?[a-z]+(ed|en)\\b"
+    classify: moderate_complexity
+    confidence: 0.58
+    explanation: "Multiple passive constructions in close proximity."
+
+  - id: negation_density_en
+    when:
+      all:
+        - language_is: ["en"]
+        - any:
+            - regex: "(?ui)\\bnot\\s+un\\w+\\b"
+            - regex: "(?ui)\\b(not|never|no|nor|neither)\\b[\\s\\S]{0,100}?\\b(not|never|no|nor|neither)\\b[\\s\\S]{0,100}?\\b(not|never|no|nor|neither)\\b"
+    classify: moderate_complexity
+    confidence: 0.58
+    explanation: "Dense negation or double-negative construction."
+
+  - id: cohesion_gap_referential_en
+    when:
+      all:
+        - language_is: ["en"]
+        - chars: { min: 120 }
+        - any:
+            - contains_any:
+                - "the former"
+                - "the latter"
+                - "the aforementioned"
+                - "said party"
+                - "said agreement"
+                - "said document"
+            - regex: "(?ui)\\b(this|that|these|those|it)\\b[\\s\\S]{0,80}?\\b(this|that|these|those|it)\\b[\\s\\S]{0,80}?\\b(this|that|these|those|it)\\b"
+    classify: moderate_complexity
+    confidence: 0.55
+    explanation: "Cohesion gap — many referential pronouns / formal anaphora."
+
+  # ============================================================
+  # ====================== SPANISH ==============================
+  # ============================================================
+
+  # ---------- VERY HIGH ----------
+
+  - id: dense_legalese_register_es
+    when:
+      all:
+        - language_is: ["es"]
+        - chars: { min: 200 }
+        - any:
+            - contains_any:
+                - "no obstante"
+                - "en virtud de"
+                - "de conformidad con"
+                - "a los efectos de"
+                - "el citado"
+                - "la citada"
+                - "el presente"
+                - "la presente"
+                - "sin perjuicio de"
+                - "a tenor de lo dispuesto"
+                - "habida cuenta de"
+                - "por cuanto"
+                - "salvo lo dispuesto"
+                - "queda obligado"
+                - "se compromete a"
+                - "deberá ser"
+                - "será considerado"
+                - "el otorgante"
+                - "la otorgante"
+                - "a tal efecto"
+                - "a los efectos oportunos"
+                - "previa autorización"
+                - "con arreglo a"
+            - semantic_match:
+                examples:
+                  - "no obstante lo dispuesto en la cláusula precedente las partes acuerdan que el incumplimiento dará lugar a la resolución"
+                  - "en virtud del presente contrato y de conformidad con la legislación aplicable las partes asumen las obligaciones recíprocas"
+                  - "a los efectos de lo establecido en el artículo precedente la parte arrendataria deberá comunicar fehacientemente"
+                  - "sin perjuicio de las demás acciones que pudieran corresponder el incumplimiento facultará a la parte cumplidora"
+                  - "habida cuenta de las circunstancias concurrentes y previa la oportuna instrucción del expediente se acuerda"
+                threshold: 0.3
+                language: "es"
+        - any:
+            - not: { max_words_per_sentence: 28 }
+            - regex: "(?ui)\\b\\w{6,}(ción|miento|idad|ancia|encia|ización)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ción|miento|idad|ancia|encia|ización)\\b"
+    classify: very_high_complexity
+    confidence: 0.95
+    explanation: "Spanish legalese register with long sentences or abstract-noun clustering."
+
+  - id: dense_academic_register_es
+    when:
+      all:
+        - language_is: ["es"]
+        - chars: { min: 250 }
+        - semantic_match:
+            examples:
+              - "el marco teórico subyacente a la conceptualización de estos fenómenos exige una interrogación sistemática de los presupuestos prevalecientes"
+              - "el presente trabajo problematiza los presupuestos epistemológicos que sustentan el discurso contemporáneo sobre la legitimidad institucional"
+              - "las implicaciones metodológicas de operacionalizar dichas construcciones ameritan una reconsideración integral del paradigma normativo"
+              - "desde una perspectiva postestructuralista cuestionamos las categorías ostensiblemente neutras que estructuran las explicaciones predominantes"
+              - "los hallazgos empíricos amplían trabajos previos al triangular evidencia cualitativa con datos longitudinales de panel"
+              - "sostenemos que los compromisos ontológicos dominantes en la literatura ocultan el papel constitutivo de la agencia"
+            threshold: 0.3
+            language: "es"
+        - any:
+            - not: { max_words_per_sentence: 25 }
+            - regex: "(?ui)\\b\\w{6,}(ción|miento|idad|ancia|encia|ización|ismo)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ción|miento|idad|ancia|encia|ización|ismo)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ción|miento|idad|ancia|encia|ización|ismo)\\b"
+    classify: very_high_complexity
+    confidence: 0.93
+    explanation: "Spanish academic register with abstract-noun pile-up or long sentences."
+
+  - id: dense_bureaucratic_register_es
+    when:
+      all:
+        - language_is: ["es"]
+        - chars: { min: 200 }
+        - semantic_match:
+            examples:
+              - "la implementación del marco de estandarización requiere la coordinación de los mecanismos transversales de gobernanza entre todos los grupos de interés"
+              - "la operacionalización de la iniciativa de priorización estratégica exige el alineamiento con los flujos procedimentales establecidos"
+              - "la optimización de la asignación de recursos exige una reevaluación integral de los indicadores organizacionales de desempeño"
+              - "la institucionalización de las prácticas de mejora continua se sustenta en una cadencia de reporte estandarizada"
+              - "el despliegue del plan de modernización está supeditado a la consolidación de las capacidades transversales de la organización"
+            threshold: 0.3
+            language: "es"
+        - any:
+            - not: { max_words_per_sentence: 28 }
+            - regex: "(?ui)\\b\\w{6,}(ción|miento|idad|ancia|encia|ización)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ción|miento|idad|ancia|encia|ización)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ción|miento|idad|ancia|encia|ización)\\b"
+    classify: very_high_complexity
+    confidence: 0.92
+    explanation: "Spanish bureaucratic register with abstract-noun pile-up or long sentences."
+
+  # ---------- HIGH ----------
+
+  - id: very_long_sentence_es
+    when:
+      all:
+        - language_is: ["es"]
+        - not: { max_words_per_sentence: 42 }
+    classify: high_complexity
+    confidence: 0.85
+    explanation: "Contains a sentence longer than 42 words (Spanish runs slightly longer than English on average)."
+
+  - id: nominalization_heavy_es
+    when:
+      all:
+        - language_is: ["es"]
+        - regex: "(?ui)\\b\\w{6,}(ción|miento|idad|ancia|encia|ización|ismo)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ción|miento|idad|ancia|encia|ización|ismo)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ción|miento|idad|ancia|encia|ización|ismo)\\b"
+    classify: high_complexity
+    confidence: 0.82
+    explanation: "Heavy Spanish nominalization (≥3 abstract noun endings clustered)."
+
+  - id: subordinate_clause_cascade_es
+    when:
+      all:
+        - language_is: ["es"]
+        - regex: "(?ui),\\s+(que|el cual|la cual|los cuales|las cuales|cuyo|cuya|cuyos|cuyas|quien|quienes)\\s+[^.!?,]{3,}?,\\s+(que|el cual|la cual|los cuales|las cuales|cuyo|cuya|cuyos|cuyas|quien|quienes|y|pero)\\s+"
+    classify: high_complexity
+    confidence: 0.8
+    explanation: "Stacked relative clauses inside one Spanish sentence."
+
+  - id: genitive_cascade_es
+    when:
+      all:
+        - language_is: ["es"]
+        - regex: "(?ui)\\b(de|del)\\s+(la\\s+|el\\s+|los\\s+|las\\s+)?\\w{4,}\\s+(de|del)\\s+(la\\s+|el\\s+|los\\s+|las\\s+)?\\w{4,}\\s+(de|del)\\s+(la\\s+|el\\s+|los\\s+|las\\s+)?\\w{4,}\\b"
+    classify: high_complexity
+    confidence: 0.78
+    explanation: "Spanish genitive cascade — three or more 'X de Y de Z' chains."
+
+  - id: counterfactual_subjunctive_es
+    when:
+      all:
+        - language_is: ["es"]
+        - chars: { min: 100 }
+        - any:
+            - regex: "(?ui)\\b(habría|hubiera|hubiese)\\s+\\w+(do|to|cho)\\b"
+            - regex: "(?ui)\\bsi\\s+\\w+(ra|se)\\b[\\s\\S]{0,80}?\\b(habría|hubiera|hubiese)\\b"
+    classify: high_complexity
+    confidence: 0.75
+    explanation: "Spanish counterfactual / subjunctive (condicional compuesto / pluscuamperfecto)."
+
+  - id: logical_operator_dense_es
+    when:
+      all:
+        - language_is: ["es"]
+        - any:
+            - contains_any:
+                - "siempre y cuando"
+                - "siempre que"
+                - "salvo que"
+                - "a menos que"
+                - "a condición de que"
+                - "en la medida en que"
+                - "si y solo si"
+                - "supuesto que"
+                - "salvo lo previsto"
+            - regex: "(?ui)\\b(salvo|excepto|siempre que)\\b[\\s\\S]{0,150}?\\b(y|o)\\b[\\s\\S]{0,150}?\\b(salvo|excepto|siempre que|a menos)\\b"
+    classify: high_complexity
+    confidence: 0.75
+    explanation: "Dense Spanish logical / propositional operators."
+
+  # ---------- MODERATE ----------
+
+  - id: long_sentence_es
+    when:
+      all:
+        - language_is: ["es"]
+        - not: { max_words_per_sentence: 30 }
+    classify: moderate_complexity
+    confidence: 0.65
+    explanation: "Contains a Spanish sentence longer than 30 words."
+
+  - id: hedging_connector_overload_es
+    when:
+      all:
+        - language_is: ["es"]
+        - any:
+            - contains_any:
+                - "no obstante"
+                - "sin embargo"
+                - "asimismo"
+                - "por consiguiente"
+                - "por ende"
+                - "en consecuencia"
+                - "por lo tanto"
+                - "ahora bien"
+            - regex: "(?ui)\\b(no obstante|sin embargo|asimismo|por consiguiente|por ende)\\b[\\s\\S]{0,200}?\\b(no obstante|sin embargo|asimismo|por consiguiente|por ende|en consecuencia)\\b"
+    classify: moderate_complexity
+    confidence: 0.62
+    explanation: "Spanish hedging connectors signal heavier register."
+
+  - id: modal_epistemic_stacking_es
+    when:
+      all:
+        - language_is: ["es"]
+        - regex: "(?ui)\\b(podría|podrían|pudiera|pudieran|debería)\\b[\\s\\S]{0,80}?\\b(posiblemente|presumiblemente|supuestamente|aparentemente|potencialmente|quizás|tal vez|acaso|eventualmente)\\b"
+    classify: moderate_complexity
+    confidence: 0.6
+    explanation: "Spanish stacked modal + epistemic hedges."
+
+  - id: passive_voice_cluster_es
+    when:
+      all:
+        - language_is: ["es"]
+        - any:
+            - regex: "(?ui)\\b(es|son|fue|fueron|era|eran|sido|siendo|ser)\\s+(\\w+mente\\s+)?\\w+(ado|ada|ados|adas|ido|ida|idos|idas)\\b[\\s\\S]{0,150}?\\b(es|son|fue|fueron|era|eran|sido|siendo|ser)\\s+(\\w+mente\\s+)?\\w+(ado|ada|ados|adas|ido|ida|idos|idas)\\b"
+            - regex: "(?ui)\\bse\\s+\\w+(an|en|aron|ieron|aban|ían|ará|erá|irá)\\b[\\s\\S]{0,150}?\\bse\\s+\\w+(an|en|aron|ieron|aban|ían|ará|erá|irá)\\b"
+    classify: moderate_complexity
+    confidence: 0.58
+    explanation: "Multiple Spanish passive constructions ('ser + participio' or 'se + verbo')."
+
+  - id: cohesion_gap_referential_es
+    when:
+      all:
+        - language_is: ["es"]
+        - chars: { min: 120 }
+        - any:
+            - contains_any:
+                - "el primero"
+                - "el último"
+                - "lo anterior"
+                - "lo precedente"
+                - "lo expuesto"
+                - "el referido"
+                - "la referida"
+                - "dicho/a"
+                - "el citado"
+                - "la citada"
+                - "el mencionado"
+                - "la mencionada"
+            - regex: "(?ui)\\b(este|esta|estos|estas|aquel|aquella|aquellos|aquellas|ello)\\b[\\s\\S]{0,80}?\\b(este|esta|estos|estas|aquel|aquella|aquellos|aquellas|ello)\\b[\\s\\S]{0,80}?\\b(este|esta|estos|estas|aquel|aquella|aquellos|aquellas|ello)\\b"
+    classify: moderate_complexity
+    confidence: 0.55
+    explanation: "Spanish cohesion gap — many demonstratives / formal anaphora."
+
+  # ============================================================
+  # ====================== CATALAN ==============================
+  # ============================================================
+
+  # ---------- VERY HIGH ----------
+
+  - id: dense_legalese_register_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - chars: { min: 200 }
+        - any:
+            - contains_any:
+                - "no obstant això"
+                - "en virtut de"
+                - "de conformitat amb"
+                - "a efectes de"
+                - "esmentat"
+                - "esmentada"
+                - "el present"
+                - "la present"
+                - "sens perjudici"
+                - "tret del que"
+                - "queda obligat"
+                - "es compromet a"
+                - "haurà de"
+                - "serà considerat"
+                - "a tal efecte"
+                - "amb caràcter previ"
+                - "atesa la"
+                - "atès que"
+            - semantic_match:
+                examples:
+                  - "no obstant això la part arrendatària restarà obligada al compliment íntegre de les obligacions que hi figuren"
+                  - "en virtut del present contracte i de conformitat amb la legislació aplicable les parts assumeixen les obligacions recíproques"
+                  - "a efectes del que estableix la clàusula precedent la part incomplidora respondrà dels danys i perjudicis"
+                  - "sens perjudici de les altres accions que puguin correspondre l'incompliment facultarà la part complidora per resoldre el contracte"
+                  - "atesa la concurrència de les circumstàncies descrites i previ informe favorable s'acorda l'aprovació definitiva"
+                threshold: 0.3
+                language: "ca"
+        - any:
+            - not: { max_words_per_sentence: 28 }
+            - regex: "(?ui)\\b\\w{6,}(ció|ment|tat|ància|ència|ització)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ció|ment|tat|ància|ència|ització)\\b"
+    classify: very_high_complexity
+    confidence: 0.95
+    explanation: "Catalan legalese register with long sentences or abstract-noun clustering."
+
+  - id: dense_academic_register_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - chars: { min: 250 }
+        - semantic_match:
+            examples:
+              - "el marc teòric que sosté la conceptualització d'aquests fenòmens exigeix una interrogació sistemàtica dels pressupòsits dominants"
+              - "aquest treball problematitza els pressupòsits epistemològics que fonamenten el discurs contemporani sobre la legitimitat institucional"
+              - "les implicacions metodològiques d'operacionalitzar aquestes construccions requereixen una reconsideració integral del paradigma normatiu"
+              - "des d'una perspectiva postestructuralista qüestionem les categories aparentment neutres que estructuren les explicacions predominants"
+              - "sostenim que els compromisos ontològics dominants en la literatura oculten el paper constitutiu de l'agència"
+            threshold: 0.3
+            language: "ca"
+        - any:
+            - not: { max_words_per_sentence: 25 }
+            - regex: "(?ui)\\b\\w{6,}(ció|ment|tat|ància|ència|ització|isme)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ció|ment|tat|ància|ència|ització|isme)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ció|ment|tat|ància|ència|ització|isme)\\b"
+    classify: very_high_complexity
+    confidence: 0.93
+    explanation: "Catalan academic register with abstract-noun pile-up or long sentences."
+
+  - id: dense_bureaucratic_register_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - chars: { min: 200 }
+        - semantic_match:
+            examples:
+              - "la implementació del marc d'estandardització requereix la coordinació dels mecanismes transversals de governança entre tots els grups d'interès"
+              - "l'operacionalització de la iniciativa de priorització estratègica exigeix l'alineament amb els fluxos procedimentals establerts"
+              - "l'optimització de l'assignació de recursos exigeix una reavaluació integral dels indicadors organitzatius de rendiment"
+              - "el desplegament del pla de modernització està supeditat a la consolidació de les capacitats transversals de l'organització"
+            threshold: 0.3
+            language: "ca"
+        - any:
+            - not: { max_words_per_sentence: 28 }
+            - regex: "(?ui)\\b\\w{6,}(ció|ment|tat|ància|ència|ització)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ció|ment|tat|ància|ència|ització)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ció|ment|tat|ància|ència|ització)\\b"
+    classify: very_high_complexity
+    confidence: 0.92
+    explanation: "Catalan bureaucratic register with abstract-noun pile-up or long sentences."
+
+  # ---------- HIGH ----------
+
+  - id: very_long_sentence_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - not: { max_words_per_sentence: 42 }
+    classify: high_complexity
+    confidence: 0.85
+    explanation: "Contains a Catalan sentence longer than 42 words."
+
+  - id: nominalization_heavy_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - regex: "(?ui)\\b\\w{6,}(ció|ment|tat|ància|ència|ització|isme)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ció|ment|tat|ància|ència|ització|isme)\\b[\\s\\S]{0,120}?\\b\\w{6,}(ció|ment|tat|ància|ència|ització|isme)\\b"
+    classify: high_complexity
+    confidence: 0.82
+    explanation: "Heavy Catalan nominalization (≥3 abstract noun endings clustered)."
+
+  - id: subordinate_clause_cascade_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - regex: "(?ui),\\s+(que|el qual|la qual|els quals|les quals|qui)\\s+[^.!?,]{3,}?,\\s+(que|el qual|la qual|els quals|les quals|qui|i|però)\\s+"
+    classify: high_complexity
+    confidence: 0.8
+    explanation: "Stacked relative clauses inside one Catalan sentence."
+
+  - id: genitive_cascade_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        # Catalan articles include the elided form l' (apostrophe before vowel).
+        - regex: "(?ui)\\b(de|del|dels)\\s+(la\\s+|el\\s+|els\\s+|les\\s+|l['’])?\\w{4,}\\s+(de|del|dels)\\s+(la\\s+|el\\s+|els\\s+|les\\s+|l['’])?\\w{4,}\\s+(de|del|dels)\\s+(la\\s+|el\\s+|els\\s+|les\\s+|l['’])?\\w{4,}\\b"
+    classify: high_complexity
+    confidence: 0.78
+    explanation: "Catalan genitive cascade — three or more 'X de Y de Z' chains."
+
+  - id: logical_operator_dense_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - any:
+            - contains_any:
+                - "sempre que"
+                - "tret que"
+                - "llevat que"
+                - "a condició que"
+                - "en la mesura que"
+                - "si i només si"
+                - "exceptuant"
+                - "sens perjudici"
+            - regex: "(?ui)\\b(tret|llevat|sempre que)\\b[\\s\\S]{0,150}?\\b(i|o)\\b[\\s\\S]{0,150}?\\b(tret|llevat|sempre que|a menys)\\b"
+    classify: high_complexity
+    confidence: 0.75
+    explanation: "Dense Catalan logical / propositional operators."
+
+  # ---------- MODERATE ----------
+
+  - id: long_sentence_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - not: { max_words_per_sentence: 30 }
+    classify: moderate_complexity
+    confidence: 0.65
+    explanation: "Contains a Catalan sentence longer than 30 words."
+
+  - id: hedging_connector_overload_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - any:
+            - contains_any:
+                - "no obstant això"
+                - "tanmateix"
+                - "així mateix"
+                - "per consegüent"
+                - "per tant"
+                - "en conseqüència"
+                - "altrament"
+                - "ara bé"
+            - regex: "(?ui)\\b(no obstant això|tanmateix|així mateix|per consegüent|per tant)\\b[\\s\\S]{0,200}?\\b(no obstant això|tanmateix|així mateix|per consegüent|per tant|en conseqüència)\\b"
+    classify: moderate_complexity
+    confidence: 0.62
+    explanation: "Catalan hedging connectors signal heavier register."
+
+  - id: modal_epistemic_stacking_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - regex: "(?ui)\\b(podria|podrien|hauria|haurien)\\b[\\s\\S]{0,80}?\\b(possiblement|presumiblement|suposadament|aparentment|potencialment|potser|eventualment)\\b"
+    classify: moderate_complexity
+    confidence: 0.6
+    explanation: "Catalan stacked modal + epistemic hedges."
+
+  - id: passive_voice_cluster_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - any:
+            - regex: "(?ui)\\b(és|són|va ser|van ser|era|eren|estat|sent|ser)\\s+(\\w+ment\\s+)?\\w+(at|ada|ats|ades|it|ida|its|ides)\\b[\\s\\S]{0,150}?\\b(és|són|va ser|van ser|era|eren|estat|sent|ser)\\s+(\\w+ment\\s+)?\\w+(at|ada|ats|ades|it|ida|its|ides)\\b"
+            - regex: "(?ui)\\bes\\s+\\w+(en|a|aren|eren|ava|ia)\\b[\\s\\S]{0,150}?\\bes\\s+\\w+(en|a|aren|eren|ava|ia)\\b"
+    classify: moderate_complexity
+    confidence: 0.58
+    explanation: "Multiple Catalan passive constructions ('ser + participi' or 'es + verb')."
+
+  - id: cohesion_gap_referential_ca
+    when:
+      all:
+        - language_is: ["ca"]
+        - chars: { min: 120 }
+        - any:
+            - contains_any:
+                - "el primer"
+                - "el darrer"
+                - "l'anterior"
+                - "el precedent"
+                - "l'esmentat"
+                - "l'esmentada"
+                - "dit"
+                - "dita"
+                - "el referit"
+                - "la referida"
+            - regex: "(?ui)\\b(aquest|aquesta|aquests|aquestes|aquell|aquella|aquells|aquelles|això|allò)\\b[\\s\\S]{0,80}?\\b(aquest|aquesta|aquests|aquestes|aquell|aquella|aquells|aquelles|això|allò)\\b[\\s\\S]{0,80}?\\b(aquest|aquesta|aquests|aquestes|aquell|aquella|aquells|aquelles|això|allò)\\b"
+    classify: moderate_complexity
+    confidence: 0.55
+    explanation: "Catalan cohesion gap — many demonstratives / formal anaphora."
+
+  # ============================================================
+  # ====================== BASQUE ===============================
+  # ============================================================
+  # Basque is agglutinative — case suffixes attach to the noun, so contains_any
+  # is brittle for inflected forms. We lean on semantic_match (which uses the
+  # ported marrow stemmer), particles that don't inflect, and broad nominal
+  # endings (-keta, -tasun, -mendua, -tzapen).
+
+  # ---------- VERY HIGH ----------
+
+  - id: dense_legalese_register_eu
+    when:
+      all:
+        - language_is: ["eu"]
+        - chars: { min: 200 }
+        - any:
+            - contains_any:
+                - "halaber"
+                - "hala ere"
+                - "horrenbestez"
+                - "horren ondorioz"
+                - "ondorioz"
+                - "aurrekoaren arabera"
+                - "aipatutako"
+                - "esandako"
+                - "kontratu honen"
+                - "klausula honen"
+                - "indarrean dagoen"
+                - "legearen arabera"
+                - "kalterik gabe"
+                - "salbuespenez"
+            - semantic_match:
+                examples:
+                  - "kontratu honen klausula guztiak indarrean egongo dira aldeen artean adostutako epea amaitu arte"
+                  - "legearen arabera eta dagozkion baldintzak betez aldeek bete beharrekoak onartzen dituzte halaber"
+                  - "aipatutako artikuluan ezarritakoaren ondorioz alde betetzaileak kalte-galerak eskatu ahal izango ditu"
+                  - "halaber aurreko klausulan ezarritakoa kontuan hartuta aldeek beren betebeharrak onartzen dituzte"
+                threshold: 0.3
+                language: "eu"
+        - any:
+            - not: { max_words_per_sentence: 28 }
+            - regex: "(?ui)\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza)\\b[\\s\\S]{0,140}?\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza)\\b"
+    classify: very_high_complexity
+    confidence: 0.95
+    explanation: "Basque legalese register with long sentences or abstract-noun clustering."
+
+  - id: dense_academic_register_eu
+    when:
+      all:
+        - language_is: ["eu"]
+        - chars: { min: 250 }
+        - semantic_match:
+            examples:
+              - "marko teorikoaren oinarrian dagoen kontzeptualizazioa fenomeno hauen aurrean nagusi diren aurresuposatuak galdekatzera behartzen gaitu"
+              - "lan honek diskurtso garaikidearen oinarri epistemologikoak galdekatzen ditu legitimitate instituzionalaren inguruan"
+              - "metodologia mailan ondorioak izan ditzaten eraikuntza horiek operazionalizatzeak paradigma normatiboaren berrikuspen sakona eskatzen du"
+              - "ikuspegi postestrukturalistatik abiatuta esplikazio nagusiak egituratzen dituzten kategoria aparentki neutroak zalantzan jartzen ditugu"
+            threshold: 0.3
+            language: "eu"
+        - any:
+            - not: { max_words_per_sentence: 25 }
+            - regex: "(?ui)\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza)\\b[\\s\\S]{0,140}?\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza)\\b[\\s\\S]{0,140}?\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza)\\b"
+    classify: very_high_complexity
+    confidence: 0.93
+    explanation: "Basque academic register with abstract-noun pile-up or long sentences."
+
+  - id: dense_bureaucratic_register_eu
+    when:
+      all:
+        - language_is: ["eu"]
+        - chars: { min: 200 }
+        - semantic_match:
+            examples:
+              - "estandarizazio markoaren ezarpenak gobernantza mekanismo zeharkakoen koordinazioa eskatzen du interes-talde guztien artean"
+              - "lehentasun-ezarpen estrategikoaren operazionalizazioak ezarritako prozedura-fluxuekiko lerrokatzea exijitzen du"
+              - "baliabideen banaketa optimizatzeak antolakuntzaren errendimendu-adierazleen berrikuspen integrala eskatzen du"
+              - "modernizazio planaren hedapena erakundearen zeharkako gaitasunen sendotzearen mende dago"
+            threshold: 0.3
+            language: "eu"
+        - any:
+            - not: { max_words_per_sentence: 28 }
+            - regex: "(?ui)\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza|pen|zio)\\b[\\s\\S]{0,140}?\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza|pen|zio)\\b[\\s\\S]{0,140}?\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza|pen|zio)\\b"
+    classify: very_high_complexity
+    confidence: 0.92
+    explanation: "Basque bureaucratic register with abstract-noun pile-up or long sentences."
+
+  # ---------- HIGH ----------
+
+  - id: very_long_sentence_eu
+    when:
+      all:
+        - language_is: ["eu"]
+        - not: { max_words_per_sentence: 38 }
+    classify: high_complexity
+    confidence: 0.85
+    explanation: "Contains a Basque sentence longer than 38 words."
+
+  - id: nominalization_heavy_eu
+    when:
+      all:
+        - language_is: ["eu"]
+        - regex: "(?ui)\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza|pen|zio)\\b[\\s\\S]{0,140}?\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza|pen|zio)\\b[\\s\\S]{0,140}?\\b\\w{5,}(keta|tasun|mendua|mendu|tzapen|kuntza|pen|zio)\\b"
+    classify: high_complexity
+    confidence: 0.82
+    explanation: "Heavy Basque nominalization (≥3 abstract noun endings clustered)."
+
+  # ---------- MODERATE ----------
+
+  - id: long_sentence_eu
+    when:
+      all:
+        - language_is: ["eu"]
+        - not: { max_words_per_sentence: 26 }
+    classify: moderate_complexity
+    confidence: 0.65
+    explanation: "Contains a Basque sentence longer than 26 words."
+
+  - id: hedging_connector_overload_eu
+    when:
+      all:
+        - language_is: ["eu"]
+        - any:
+            - contains_any:
+                - "halaber"
+                - "hala ere"
+                - "halere"
+                - "alabaina"
+                - "horrenbestez"
+                - "hortaz"
+                - "horren ondorioz"
+                - "bestalde"
+                - "hori dela eta"
+            - regex: "(?ui)\\b(halaber|hala ere|halere|alabaina|horrenbestez|hortaz|bestalde)\\b[\\s\\S]{0,200}?\\b(halaber|hala ere|halere|alabaina|horrenbestez|hortaz|bestalde)\\b"
+    classify: moderate_complexity
+    confidence: 0.62
+    explanation: "Basque hedging / discourse connectors signal heavier register."
+
+  - id: modal_epistemic_stacking_eu
+    when:
+      all:
+        - language_is: ["eu"]
+        - any:
+            - contains_any:
+                - "agian beharbada"
+                - "ziurrenik"
+                - "ustez"
+                - "antza denez"
+            - regex: "(?ui)\\b(agian|beharbada|akaso)\\b[\\s\\S]{0,80}?\\b(ziurrenik|ustez|itxuraz|antza)\\b"
+    classify: moderate_complexity
+    confidence: 0.58
+    explanation: "Basque stacked modal / epistemic hedges."
+
+  - id: cohesion_gap_referential_eu
+    when:
+      all:
+        - language_is: ["eu"]
+        - chars: { min: 120 }
+        - any:
+            - contains_any:
+                - "aipatutako"
+                - "esandako"
+                - "aurrekoa"
+                - "aurreko"
+                - "lehena"
+                - "azkena"
+            - regex: "(?ui)\\b(hau|hori|hura|hauek|horiek|haiek)\\b[\\s\\S]{0,80}?\\b(hau|hori|hura|hauek|horiek|haiek)\\b[\\s\\S]{0,80}?\\b(hau|hori|hura|hauek|horiek|haiek)\\b"
+    classify: moderate_complexity
+    confidence: 0.55
+    explanation: "Basque cohesion gap — many demonstratives / formal anaphora."
+
+default:
+  classify: simple
+  confidence: 1.0

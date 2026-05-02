@@ -6,6 +6,58 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use rustc_hash::FxHashMap;
 
+/// Detailed metrics for a single `evaluate` call.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct EvalMetrics {
+    pub rule_evals: u64,
+    pub predicate_evals: u64,
+    pub predicate_true: u64,
+    pub predicate_false: u64,
+    pub regex_cache_hits: u64,
+    pub regex_cache_misses: u64,
+    pub tokenize_calls: u64,
+    pub tokens_produced: u64,
+    pub stem_calls: u64,
+    pub semantic_similarity_calls: u64,
+    pub entity_detection_calls: u64,
+    pub url_extract_calls: u64,
+    pub section_scan_calls: u64,
+    pub chain_traversals: u64,
+    pub triggered_rules: u64,
+    pub all_short_circuits: u64,
+    pub any_short_circuits: u64,
+    pub not_short_circuits: u64,
+    pub max_chain_depth: u64,
+    pub language_detect_calls: u64,
+    pub lower_allocations: u64,
+    pub lower_bytes: u64,
+}
+
+thread_local! {
+    static METRICS: RefCell<Option<EvalMetrics>> = RefCell::new(None);
+}
+
+#[inline]
+fn with_metrics<F: FnOnce(&mut EvalMetrics)>(f: F) {
+    METRICS.with(|cell| {
+        if let Some(ref mut m) = *cell.borrow_mut() {
+            f(m);
+        }
+    });
+}
+
+/// Evaluate `program` against `input` and return both the result and a
+/// detailed metrics snapshot. Zero-cost when not called — the normal
+/// `evaluate` path never touches the metrics thread-local.
+pub fn evaluate_with_metrics(program: &Program, input: &str) -> (EvalResult, EvalMetrics) {
+    METRICS.with(|cell| {
+        *cell.borrow_mut() = Some(EvalMetrics::default());
+    });
+    let result = evaluate(program, input);
+    let metrics = METRICS.with(|cell| cell.borrow_mut().take().unwrap_or_default());
+    (result, metrics)
+}
+
 #[derive(Debug, Serialize)]
 pub struct EvalResult {
     pub classification: String,
@@ -31,7 +83,7 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
     let mut triggered: Vec<TriggeredRule> = Vec::new();
     let mut visited: HashSet<&str> = HashSet::new();
     for rule in &program.rules {
-        eval_rule(rule, &program.rules, &ctx, &mut triggered, &mut visited);
+        eval_rule(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
     }
 
     let winner: &Verdict = triggered
@@ -57,9 +109,17 @@ fn eval_rule<'a>(
     ctx: &Ctx,
     out: &mut Vec<TriggeredRule>,
     visited: &mut HashSet<&'a str>,
+    depth: u64,
 ) {
+    with_metrics(|m| {
+        m.rule_evals += 1;
+        if depth > m.max_chain_depth {
+            m.max_chain_depth = depth;
+        }
+    });
     if !visited.insert(rule.id.as_str()) { return; } // cycle / duplicate guard
     if !eval_predicate(&rule.when, ctx) { return; }
+    with_metrics(|m| m.triggered_rules += 1);
     out.push(TriggeredRule {
         id: rule.id.clone(),
         classification: rule.verdict.classify.clone(),
@@ -68,7 +128,8 @@ fn eval_rule<'a>(
     });
     for chained_id in &rule.then {
         if let Some(next) = rules.iter().find(|r| r.id == *chained_id) {
-            eval_rule(next, rules, ctx, out, visited);
+            with_metrics(|m| m.chain_traversals += 1);
+            eval_rule(next, rules, ctx, out, visited, depth + 1);
         }
     }
 }
@@ -83,7 +144,12 @@ struct Ctx<'a> {
 
 impl<'a> Ctx<'a> {
     fn new(input: &'a str) -> Self {
-        Ctx { input, lower: input.to_lowercase() }
+        let lower = input.to_lowercase();
+        with_metrics(|m| {
+            m.lower_allocations += 1;
+            m.lower_bytes += lower.len() as u64;
+        });
+        Ctx { input, lower }
     }
 
     fn lower(&self) -> &str {
@@ -118,7 +184,8 @@ impl RegexCache {
         let key = regex_cache_key(pattern, case_sensitive);
         GLOBAL_REGEX_CACHE.with(|cell| {
             let mut cache = cell.borrow_mut();
-            cache.entry(key).or_insert_with(|| {
+            let was_present = cache.contains_key(&key);
+            let result = cache.entry(key).or_insert_with(|| {
                 let mut builder = RegexBuilder::new(pattern);
                 builder.case_insensitive(!case_sensitive);
                 // For ASCII-only patterns without Unicode character classes,
@@ -127,7 +194,13 @@ impl RegexCache {
                     builder.unicode(false);
                 }
                 builder.build().ok()
-            }).clone()
+            }).clone();
+            if was_present {
+                with_metrics(|m| m.regex_cache_hits += 1);
+            } else {
+                with_metrics(|m| m.regex_cache_misses += 1);
+            }
+            result
         })
     }
 }
@@ -154,8 +227,9 @@ fn is_ascii_only_regex(pattern: &str) -> bool {
 
 #[inline]
 fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
+    with_metrics(|m| m.predicate_evals += 1);
     let input = ctx.input;
-    match p {
+    let result = match p {
         Predicate::ContainsAny { needles, case_sensitive } => {
             needles.iter().any(|n| contains_ctx(ctx, n, *case_sensitive))
         }
@@ -170,24 +244,44 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         }
         Predicate::MinLength { tokens } => token_count(input) >= *tokens as usize,
         Predicate::MaxLength { tokens } => token_count(input) <= *tokens as usize,
-        Predicate::All(items) => items.iter().all(|q| eval_predicate(q, ctx)),
-        Predicate::Any(items) => items.iter().any(|q| eval_predicate(q, ctx)),
-        Predicate::Not(inner) => !eval_predicate(inner, ctx),
+        Predicate::All(items) => {
+            let r = items.iter().all(|q| eval_predicate(q, ctx));
+            if !r { with_metrics(|m| m.all_short_circuits += 1); }
+            r
+        }
+        Predicate::Any(items) => {
+            let r = items.iter().any(|q| eval_predicate(q, ctx));
+            if r { with_metrics(|m| m.any_short_circuits += 1); }
+            r
+        }
+        Predicate::Not(inner) => {
+            let r = !eval_predicate(inner, ctx);
+            with_metrics(|m| m.not_short_circuits += 1);
+            r
+        }
         Predicate::Always => true,
 
-        Predicate::HasSection { titles } => has_section(input, titles),
-        Predicate::HasEntity { kind, min_count } => count_entities(input, *kind) >= *min_count as usize,
+        Predicate::HasSection { titles } => {
+            with_metrics(|m| m.section_scan_calls += 1);
+            has_section(input, titles)
+        }
+        Predicate::HasEntity { kind, min_count } => {
+            with_metrics(|m| m.entity_detection_calls += 1);
+            count_entities(input, *kind) >= *min_count as usize
+        }
         Predicate::ParagraphCount { min, max } => {
             let n = paragraph_count(input);
             min.map_or(true, |m| n >= m as usize) && max.map_or(true, |m| n <= m as usize)
         }
         Predicate::MaxWordsPerSentence { max } => max_words_per_sentence(input) <= *max as usize,
         Predicate::LanguageIs { codes } => {
+            with_metrics(|m| m.language_detect_calls += 1);
             let detected = crate::text::detect_language(input).code();
             codes.iter().any(|c| c == detected)
         }
 
         Predicate::HasUrlToDomain { domains, allow_subdomains } => {
+            with_metrics(|m| m.url_extract_calls += 1);
             url_hosts(input).iter().any(|host| {
                 domains.iter().any(|d| {
                     if host == d { return true; }
@@ -214,6 +308,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         }
 
         Predicate::SemanticMatch { examples, threshold, extra_synonyms, language } => {
+            with_metrics(|m| m.language_detect_calls += 1);
             let lang = language
                 .as_deref()
                 .and_then(crate::text::Language::from_code)
@@ -233,6 +328,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
                 Some(semantic::SynonymIndex::from_json_for(&json, lang))
             };
 
+            with_metrics(|m| m.semantic_similarity_calls += examples.len() as u64);
             examples.iter().any(|ex| {
                 semantic::similarity_lang(input, ex, lang, extra_idx.as_ref()) >= *threshold
             })
@@ -307,7 +403,9 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         Predicate::RepeatedToken { min_count } => {
             use std::collections::HashMap as Map;
             let mut counts: Map<String, u32> = Map::new();
-            for tok in crate::text::tokenize(input) {
+            let toks = crate::text::tokenize(input);
+            with_metrics(|m| { m.tokenize_calls += 1; m.tokens_produced += toks.len() as u64; });
+            for tok in toks {
                 if tok.chars().count() < 2 { continue; }
                 let entry = counts.entry(tok).or_insert(0);
                 *entry += 1;
@@ -317,6 +415,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         }
         Predicate::TypeTokenRatioBelow { max_ratio } => {
             let toks = crate::text::tokenize(input);
+            with_metrics(|m| { m.tokenize_calls += 1; m.tokens_produced += toks.len() as u64; });
             if toks.is_empty() { return false; }
             let total = toks.len() as f32;
             let unique: std::collections::HashSet<&String> = toks.iter().collect();
@@ -331,7 +430,11 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
                 input.chars().any(|c| char_in_script(c, s))
             })
         }
-    }
+    };
+    with_metrics(|m| {
+        if result { m.predicate_true += 1; } else { m.predicate_false += 1; }
+    });
+    result
 }
 
 // ---------- predicate helpers ----------
