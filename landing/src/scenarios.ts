@@ -367,12 +367,12 @@ default:
 
   {
     id: 'multilingual',
-    title: 'Multilingual cancellation intent (ES/EU)',
+    title: 'Multilingual cancellation intent (ES/CA/EU)',
     domain: 'Internationalization',
-    blurb: 'Detect cancellation intent in Spanish and Basque using language-tagged semantic match. Same rule pack handles both, no per-language fork.',
-    why: 'Iratxo ships built-in stemmers for English, Spanish, and Basque. Auto-detection picks the right one per input — no glue code in your service.',
+    blurb: 'Detect cancellation intent in Spanish, Catalan, and Basque using language-tagged semantic match. Same rule pack handles all three, no per-language fork.',
+    why: 'Iratxo ships built-in stemmers for English, Spanish, Catalan, and Basque. Auto-detection picks the right one per input — no glue code in your service.',
     yaml: `name: multilingual_cancellation
-description: Detect cancellation intent across English, Spanish, and Basque.
+description: Detect cancellation intent across English, Spanish, Catalan, and Basque.
 
 rules:
   - id: cancel_es
@@ -389,6 +389,21 @@ rules:
     classify: cancelacion
     confidence: 0.8
     explanation: "Cancellation intent (es)."
+
+  - id: cancel_ca
+    when:
+      semantic_match:
+        examples:
+          - "l'usuari vol cancel·lar el contracte"
+          - "si us plau, finalitzeu la meva subscripció"
+        threshold: 0.3
+        language: "ca"
+        synonyms:
+          cancel·lar: ["finalitzar", "rescindir", "anul·lar"]
+          contracte: ["acord", "conveni"]
+    classify: cancelacion
+    confidence: 0.8
+    explanation: "Cancellation intent (ca)."
 
   - id: cancel_eu
     when:
@@ -418,6 +433,7 @@ default:
 `,
     samples: [
       { label: 'Spanish cancel', input: 'Hola, por favor terminen mi suscripcion lo antes posible.', expect: 'cancelacion' },
+      { label: 'Catalan cancel', input: "Si us plau, finalitzeu la meva subscripció, gràcies.", expect: 'cancelacion' },
       { label: 'Basque cancel', input: 'Kaixo, harpidetza ezeztatu nahi dut.', expect: 'cancelacion' },
       { label: 'English cancel', input: 'Please cancel my subscription, thanks.', expect: 'cancelacion' },
       { label: 'Spanish question', input: '¿Cuánto cuesta el plan anual?', expect: 'ok' },

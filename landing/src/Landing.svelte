@@ -175,15 +175,31 @@
 
   // ---------------- Predicate table ----------------
   const predicates = [
-    { name: 'contains_any / contains_all / not_contains_any', what: 'Substring membership over the input.' },
+    { name: 'contains_any / contains_all / not_contains_any', what: 'Substring membership (case toggle).' },
+    { name: 'word_contains_any',           what: 'Whole-word match using Unicode word boundaries.' },
+    { name: 'starts_with_any / ends_with_any', what: 'Prefix / suffix match against trimmed input.' },
     { name: 'regex',                       what: 'Cached per-evaluation Rust regex match.' },
     { name: 'min_length / max_length',     what: 'Token-count bounds.' },
     { name: 'paragraphs: { min, max }',    what: 'Paragraph-count bounds.' },
+    { name: 'sentences: { min, max }',     what: 'Sentence-count bounds (split on . ! ?).' },
+    { name: 'chars: { min, max }',         what: 'Unicode scalar character-count bounds.' },
+    { name: 'lines: { min, max }',         what: 'Line-count bounds (split on \\n).' },
     { name: 'max_words_per_sentence',      what: 'Readability gate.' },
     { name: 'has_section: [...]',          what: 'Markdown # heading or HTML <h1..h6>.' },
-    { name: 'has_entity: { kind, min_count }', what: 'email · phone · url · currency.' },
-    { name: 'language_is: [...]',          what: 'Detected language ∈ codes (en, es, eu).' },
-    { name: 'semantic_match',              what: 'Hashing-trick + per-language stem + synonym dict.' },
+    { name: 'has_entity: { kind, min_count }', what: 'email · phone · url · currency · ip_address · credit_card · iban · date_iso · hashtag · mention · emoji.' },
+    { name: 'has_url_to_domain',           what: 'At least one URL host matches an allowlist; compose with not for denylist.' },
+    { name: 'language_is: [...]',          what: 'Detected language ∈ codes (en, es, ca, eu).' },
+    { name: 'mostly_uppercase',            what: 'Fraction of letters that are uppercase ≥ min_ratio.' },
+    { name: 'digit_ratio_above',           what: 'Fraction of non-whitespace chars that are digits ≥ min_ratio.' },
+    { name: 'punctuation_ratio_above',     what: 'Fraction of non-whitespace chars that are ASCII punctuation ≥ min_ratio.' },
+    { name: 'token_entropy_above',         what: 'High Shannon-entropy token — catches API keys & secrets without known prefixes.' },
+    { name: 'repeated_char_run',           what: 'Consecutive identical chars (soooooo, !!!!!).' },
+    { name: 'repeated_token',              what: 'Same non-stopword token appears ≥ N times (spam / copy-paste).' },
+    { name: 'type_token_ratio_below',      what: 'Low lexical diversity (unique / total tokens).' },
+    { name: 'has_invisible_chars',         what: 'Zero-width / BOM-style chars — homoglyph / phishing defense.' },
+    { name: 'has_mixed_script_token',      what: 'Token mixing Unicode scripts (e.g. Cyrillic а inside Latin PayPal).' },
+    { name: 'script_is: [...]',            what: 'Input contains chars from listed scripts (latin, cyrillic, greek, han, hiragana, katakana, hangul, arabic, hebrew, devanagari, thai).' },
+    { name: 'semantic_match',              what: 'Hashing-trick + per-language stem + synonym dict (en/es/ca/eu).' },
     { name: 'all / any / not / always',    what: 'Combinators with short-circuit evaluation.' },
   ];
 
@@ -267,9 +283,10 @@
         </div>
 
         <div class="flex flex-wrap gap-x-5 gap-y-1 pt-3 text-xs text-[#7a7a8a] justify-center lg:justify-start">
-          <span class="flex items-center gap-1.5"><Check size={12} class="text-emerald-400" /> 41 Rust tests</span>
+          <span class="flex items-center gap-1.5"><Check size={12} class="text-emerald-400" /> 57 Rust tests</span>
+          <span class="flex items-center gap-1.5"><Check size={12} class="text-emerald-400" /> 7 JS host tests</span>
           <span class="flex items-center gap-1.5"><Check size={12} class="text-emerald-400" /> 850-row Basque parity test</span>
-          <span class="flex items-center gap-1.5"><Check size={12} class="text-emerald-400" /> 134 µs / pack</span>
+          <span class="flex items-center gap-1.5"><Check size={12} class="text-emerald-400" /> 134 µs keyword pack</span>
         </div>
       </div>
 
@@ -394,7 +411,7 @@
         <div class="group bg-[#13121a] border border-white/5 p-5 sm:p-6 rounded-xl hover:border-[#7c3aed]/40 transition-all hover:-translate-y-1 hover:shadow-[0_0_20px_rgba(124,58,237,0.1)]">
           <Languages class="text-[#7c3aed] mb-4 group-hover:scale-110 transition-transform" size={26} />
           <h3 class="text-base sm:text-lg font-semibold text-white mb-2" use:hoverScramble={'Semantic match'}>Semantic match</h3>
-          <p class="text-[#9090a0] text-sm leading-relaxed">Hashing-trick token vectors over per-language stems and a built-in synonym dictionary. Auto-detects English, Spanish, Basque. No model file, no network.</p>
+          <p class="text-[#9090a0] text-sm leading-relaxed">Hashing-trick token vectors over per-language stems and a built-in synonym dictionary. Auto-detects English, Spanish, Catalan, Basque. No model file, no network.</p>
         </div>
         <div class="group bg-[#13121a] border border-white/5 p-5 sm:p-6 rounded-xl hover:border-[#ff7a18]/40 transition-all hover:-translate-y-1 hover:shadow-[0_0_20px_rgba(255,122,24,0.1)]">
           <Zap class="text-[#ff7a18] mb-4 group-hover:scale-110 transition-transform" size={26} />
@@ -415,6 +432,16 @@
           <Code class="text-[#7c3aed] mb-4 group-hover:scale-110 transition-transform" size={26} />
           <h3 class="text-base sm:text-lg font-semibold text-white mb-2" use:hoverScramble={'Tiny ABI'}>Tiny ABI</h3>
           <p class="text-[#9090a0] text-sm leading-relaxed">Three exports: <code>iratxo_alloc</code>, <code>iratxo_dealloc</code>, <code>iratxo_execute</code>. Drive it from any host with read/write access to linear memory.</p>
+        </div>
+        <div class="group bg-[#13121a] border border-white/5 p-5 sm:p-6 rounded-xl hover:border-[#ff7a18]/40 transition-all hover:-translate-y-1 hover:shadow-[0_0_20px_rgba(255,122,24,0.1)]">
+          <ShieldCheck class="text-[#ff7a18] mb-4 group-hover:scale-110 transition-transform" size={26} />
+          <h3 class="text-base sm:text-lg font-semibold text-white mb-2" use:hoverScramble={'Unicode anti-phishing'}>Unicode anti-phishing</h3>
+          <p class="text-[#9090a0] text-sm leading-relaxed"><code>has_invisible_chars</code>, <code>has_mixed_script_token</code>, and <code>script_is</code> catch zero-width obfuscation and homoglyph attacks (Cyrillic 'а' in Latin words) without external databases.</p>
+        </div>
+        <div class="group bg-[#13121a] border border-white/5 p-5 sm:p-6 rounded-xl hover:border-[#7c3aed]/40 transition-all hover:-translate-y-1 hover:shadow-[0_0_20px_rgba(124,58,237,0.1)]">
+          <Filter class="text-[#7c3aed] mb-4 group-hover:scale-110 transition-transform" size={26} />
+          <h3 class="text-base sm:text-lg font-semibold text-white mb-2" use:hoverScramble={'Heuristic spam gates'}>Heuristic spam gates</h3>
+          <p class="text-[#9090a0] text-sm leading-relaxed"><code>repeated_char_run</code>, <code>repeated_token</code>, <code>type_token_ratio_below</code>, <code>mostly_uppercase</code>, and <code>token_entropy_above</code> give you spam, shout, and secret-detection layers without regex whack-a-mole.</p>
         </div>
       </div>
     </div>
@@ -521,7 +548,7 @@
         <div class="bg-[#13121a] border border-white/5 rounded-xl p-5 sm:p-6">
           <Globe class="text-[#7c3aed] mb-3" size={24} />
           <h3 class="text-white font-semibold mb-1.5">Multilingual triage</h3>
-          <p class="text-[#9090a0] text-sm leading-relaxed">Built-in stemmers + synonym dictionaries for English, Spanish, and Basque. Auto-detect input language; per-rule language overrides for tight phrasing.</p>
+          <p class="text-[#9090a0] text-sm leading-relaxed">Built-in stemmers + synonym dictionaries for English, Spanish, Catalan, and Basque. Auto-detect input language; per-rule language overrides for tight phrasing.</p>
         </div>
         <div class="bg-[#13121a] border border-white/5 rounded-xl p-5 sm:p-6">
           <Cloud class="text-[#22d3ee] mb-3" size={24} />
@@ -784,10 +811,11 @@ iratxo_execute(rule_ptr, rule_len, input_ptr, input_len) -> u64   // (ptr<<32) |
         </button>
         {#if openSection === 'semantic'}
           <div class="px-5 sm:px-6 pt-5 sm:pt-6 pb-5 sm:pb-6 text-[#b0b0c0] text-sm leading-relaxed space-y-4">
-            <p>Multilingual: English, Spanish, Basque. Auto-detected from input by default; specify <code>language</code> to force.</p>
+            <p>Multilingual: English, Spanish, Catalan, Basque. Auto-detected from input by default; specify <code>language</code> to force.</p>
             <p><strong class="text-white">Pipeline:</strong> tokenize (Unicode) → drop per-language stop words → stem → synonym-normalize → signed feature hashing into 256-dim dense vector → cosine similarity.</p>
             <ul class="list-disc pl-5 space-y-1">
               <li><strong class="text-white">English / Spanish stemmers</strong> — Snowball via <code>rust-stemmers</code>.</li>
+              <li><strong class="text-white">Catalan stemmer</strong> — hand-rolled light stemmer. Folds diacritics, strips high-frequency nominal/adjectival/verbal suffixes, and collapses orthographic <code>qu</code> → <code>c</code> so <code>polítiques</code> / <code>política</code> / <code>polítics</code> share a stem.</li>
               <li><strong class="text-white">Basque stemmer</strong> — direct port of <a href="https://github.com/enekos/marrow" target="_blank" rel="noopener" class="text-[#ff7a18] hover:underline">marrow</a>'s implementation, validated against marrow's reference output on 850 words (100% parity, see <code>crates/iratxo-core/tests/basque_parity.rs</code>).</li>
             </ul>
             <p><strong class="text-white">Score range:</strong> 0.0–1.0. Realistic thresholds: 0.2 for sparse texts that share a single concept token after stemming; 0.3 for typical paragraph-length inputs; 0.4–0.5 for tight phrasing matches.</p>

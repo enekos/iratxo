@@ -255,15 +255,55 @@ fn is_known_script(s: &str) -> bool {
 
 pub fn parse(src: &str) -> Result<Program, DslError> {
     let doc: DslDoc = serde_yaml::from_str(src).map_err(|e| DslError::from_yaml(e, src))?;
+    if doc.name.trim().is_empty() {
+        return Err(DslError::Validation("pack name is empty".into()));
+    }
     if doc.rules.is_empty() {
         return Err(DslError::Validation("at least one rule required".into()));
     }
     let rules = doc.rules.into_iter().map(lower_rule).collect::<Result<Vec<_>, _>>()?;
-    let default = doc.default.map(lower_verdict).unwrap_or(Verdict {
-        classify: "ok".into(),
-        confidence: 1.0,
-        explanation: None,
-    });
+    let default = match doc.default.map(lower_verdict) {
+        Some(v) => {
+            if v.classify.is_empty() {
+                return Err(DslError::Validation("default classify is empty".into()));
+            }
+            if !(0.0..=1.0).contains(&v.confidence) {
+                return Err(DslError::Validation(format!(
+                    "default confidence {} out of [0,1]", v.confidence
+                )));
+            }
+            v
+        }
+        None => Verdict { classify: "ok".into(), confidence: 1.0, explanation: None },
+    };
+
+    // Duplicate rule ids are a content-lint error: rules are looked up by id
+    // in `then`-chains and tests, so collisions silently shadow each other.
+    let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for r in &rules {
+        if !seen.insert(r.id.as_str()) {
+            return Err(DslError::Validation(format!(
+                "duplicate rule id: {:?}", r.id
+            )));
+        }
+    }
+    // `then`-chained rule ids must reference real rules. Self-chains loop and
+    // are caught here too.
+    for r in &rules {
+        for t in &r.then {
+            if t == &r.id {
+                return Err(DslError::Validation(format!(
+                    "rule {:?} chains to itself in `then`", r.id
+                )));
+            }
+            if !seen.contains(t.as_str()) {
+                return Err(DslError::Validation(format!(
+                    "rule {:?} chains to unknown rule {:?} in `then`", r.id, t
+                )));
+            }
+        }
+    }
+
     Ok(Program {
         name: doc.name,
         description: doc.description,
@@ -273,9 +313,25 @@ pub fn parse(src: &str) -> Result<Program, DslError> {
 }
 
 fn lower_rule(r: DslRule) -> Result<Rule, DslError> {
+    if r.id.trim().is_empty() {
+        return Err(DslError::Validation("rule id is empty".into()));
+    }
+    if r.classify.trim().is_empty() {
+        return Err(DslError::Validation(format!("rule {:?}: classify is empty", r.id)));
+    }
+    if !(0.0..=1.0).contains(&r.confidence) {
+        return Err(DslError::Validation(format!(
+            "rule {:?}: confidence {} out of [0,1]", r.id, r.confidence
+        )));
+    }
+    let id = r.id;
+    let when = lower_predicate(r.when).map_err(|e| match e {
+        DslError::Validation(msg) => DslError::Validation(format!("rule {:?}: {}", id, msg)),
+        other => other,
+    })?;
     Ok(Rule {
-        id: r.id,
-        when: lower_predicate(r.when)?,
+        id,
+        when,
         verdict: Verdict { classify: r.classify, confidence: r.confidence, explanation: r.explanation },
         then: r.then,
     })
@@ -300,7 +356,16 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
         let needles = if cs { n } else { n.into_iter().map(|s| s.to_lowercase()).collect() };
         variants.push(Predicate::NotContainsAny { needles, case_sensitive: cs });
     }
-    if let Some(r) = p.regex { variants.push(Predicate::Regex { pattern: r, case_sensitive: cs }); }
+    if let Some(r) = p.regex {
+        let mut b = regex::RegexBuilder::new(&r);
+        b.case_insensitive(!cs);
+        if let Err(e) = b.build() {
+            return Err(DslError::Validation(format!(
+                "regex pattern {:?} failed to compile: {}", r, e
+            )));
+        }
+        variants.push(Predicate::Regex { pattern: r, case_sensitive: cs });
+    }
     if let Some(n) = p.min_length { variants.push(Predicate::MinLength { tokens: n }); }
     if let Some(n) = p.max_length { variants.push(Predicate::MaxLength { tokens: n }); }
     if let Some(items) = p.all {
@@ -501,5 +566,154 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
         0 => Err(DslError::Validation("predicate must specify at least one of: contains_any/contains_all/not_contains_any/regex/min_length/max_length/all/any/not".into())),
         1 => Ok(variants.into_iter().next().unwrap()),
         _ => Ok(Predicate::All(variants)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn err(src: &str) -> String {
+        match parse(src) {
+            Ok(_) => panic!("expected parse error, got Ok for:\n{}", src),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    #[test]
+    fn parse_minimal_succeeds() {
+        let src = r#"
+name: t
+rules:
+  - id: a
+    when: { contains_any: ["x"] }
+    classify: hit
+"#;
+        let p = parse(src).expect("parse ok");
+        assert_eq!(p.name, "t");
+        assert_eq!(p.rules.len(), 1);
+        assert_eq!(p.rules[0].verdict.confidence, 1.0);
+        assert_eq!(p.default.classify, "ok");
+    }
+
+    #[test]
+    fn pack_name_required() {
+        let msg = err(r#"
+name: ""
+rules:
+  - id: a
+    when: { contains_any: ["x"] }
+    classify: hit
+"#);
+        assert!(msg.contains("pack name is empty"), "got: {msg}");
+    }
+
+    #[test]
+    fn duplicate_rule_id_rejected() {
+        let msg = err(r#"
+name: t
+rules:
+  - id: dup
+    when: { contains_any: ["x"] }
+    classify: a
+  - id: dup
+    when: { contains_any: ["y"] }
+    classify: b
+"#);
+        assert!(msg.contains("duplicate rule id"), "got: {msg}");
+        assert!(msg.contains("dup"), "got: {msg}");
+    }
+
+    #[test]
+    fn then_to_unknown_rule_rejected() {
+        let msg = err(r#"
+name: t
+rules:
+  - id: a
+    when: { contains_any: ["x"] }
+    classify: hit
+    then: ["nope"]
+"#);
+        assert!(msg.contains("chains to unknown rule"), "got: {msg}");
+        assert!(msg.contains("nope"), "got: {msg}");
+    }
+
+    #[test]
+    fn then_self_reference_rejected() {
+        let msg = err(r#"
+name: t
+rules:
+  - id: a
+    when: { contains_any: ["x"] }
+    classify: hit
+    then: ["a"]
+"#);
+        assert!(msg.contains("chains to itself"), "got: {msg}");
+    }
+
+    #[test]
+    fn invalid_regex_rejected_with_pattern_in_message() {
+        let msg = err(r#"
+name: t
+rules:
+  - id: bad
+    when: { regex: "(unclosed" }
+    classify: hit
+"#);
+        assert!(msg.contains("regex pattern"), "got: {msg}");
+        assert!(msg.contains("(unclosed"), "got: {msg}");
+        // Rule id should be threaded through.
+        assert!(msg.contains("\"bad\""), "got: {msg}");
+    }
+
+    #[test]
+    fn rule_confidence_out_of_range_rejected() {
+        let msg = err(r#"
+name: t
+rules:
+  - id: a
+    when: { contains_any: ["x"] }
+    classify: hit
+    confidence: 1.5
+"#);
+        assert!(msg.contains("confidence 1.5"), "got: {msg}");
+        assert!(msg.contains("out of [0,1]"), "got: {msg}");
+    }
+
+    #[test]
+    fn default_confidence_out_of_range_rejected() {
+        let msg = err(r#"
+name: t
+rules:
+  - id: a
+    when: { contains_any: ["x"] }
+    classify: hit
+default:
+  classify: ok
+  confidence: -0.1
+"#);
+        assert!(msg.contains("default confidence"), "got: {msg}");
+        assert!(msg.contains("out of [0,1]"), "got: {msg}");
+    }
+
+    #[test]
+    fn empty_classify_rejected() {
+        let msg = err(r#"
+name: t
+rules:
+  - id: a
+    when: { contains_any: ["x"] }
+    classify: ""
+"#);
+        assert!(msg.contains("classify is empty"), "got: {msg}");
+    }
+
+    #[test]
+    fn parse_error_has_line_and_snippet() {
+        // intentional malformed YAML — unbalanced bracket
+        let msg = err("name: t\nrules: [\n");
+        assert!(msg.contains("parse error"), "got: {msg}");
+        // line number should appear when available
+        assert!(msg.contains("line"), "got: {msg}");
     }
 }

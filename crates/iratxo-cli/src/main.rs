@@ -23,9 +23,12 @@ enum Cmd {
         #[arg(short, long)]
         out: Option<PathBuf>,
     },
-    /// Validate a YAML rule file without writing output.
+    /// Validate one or more YAML rule files without writing output.
+    /// Directories are searched recursively for `*.yaml` and `*.yml`.
+    /// Exits non-zero if any file fails; lists failing files at the end.
     Lint {
-        input: PathBuf,
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
     },
     /// Run a compiled IR against an input file using the Wasm engine.
     Run {
@@ -82,7 +85,7 @@ enum Cmd {
 fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Build { input, out } => cmd_build(input, out),
-        Cmd::Lint { input } => cmd_lint(input),
+        Cmd::Lint { inputs } => cmd_lint(inputs),
         Cmd::Run { rule, input, engine } => cmd_run(rule, input, engine),
         Cmd::RunNative { rule, input } => cmd_run_native(rule, input),
         Cmd::Test { rule, cases } => cmd_test(rule, cases),
@@ -107,11 +110,184 @@ fn cmd_build(input: PathBuf, out: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_lint(input: PathBuf) -> Result<()> {
-    let src = fs::read_to_string(&input)?;
-    let program = iratxo_core::compile_yaml(&src)?;
-    println!("ok: {} ({} rules)", program.name, program.rules.len());
+fn cmd_lint(inputs: Vec<PathBuf>) -> Result<()> {
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut walk_errors: Vec<(PathBuf, String)> = Vec::new();
+    for input in &inputs {
+        match collect_yaml_files(input) {
+            Ok(found) => {
+                if found.is_empty() && input.is_dir() {
+                    eprintln!("warning: no .yaml/.yml files under {}", input.display());
+                }
+                files.extend(found);
+            }
+            Err(e) => walk_errors.push((input.clone(), e)),
+        }
+    }
+
+    // Stable, deterministic order so the failure list is reproducible.
+    files.sort();
+    files.dedup();
+
+    let mut failed: Vec<(PathBuf, String)> = Vec::new();
+    for (i, path) in files.iter().enumerate() {
+        if i > 0 { println!(); }
+        println!("== {} ==", path.display());
+        match lint_one(path) {
+            Ok(()) => {}
+            Err(reason) => failed.push((path.clone(), reason)),
+        }
+    }
+
+    let total = files.len();
+    let bad = failed.len() + walk_errors.len();
+    println!();
+    if bad == 0 {
+        println!("lint ok: {} file{} passed", total, if total == 1 { "" } else { "s" });
+        return Ok(());
+    }
+
+    eprintln!("lint failed: {} file{} with errors (out of {} checked):",
+        bad, if bad == 1 { "" } else { "s" }, total + walk_errors.len());
+    for (path, reason) in &walk_errors {
+        eprintln!("  - {}: {}", path.display(), reason);
+    }
+    for (path, reason) in &failed {
+        eprintln!("  - {}: {}", path.display(), reason);
+    }
+    std::process::exit(1);
+}
+
+/// Lint a single file. On success, prints the verbose per-rule summary to
+/// stdout and returns Ok. On failure, prints the multi-line error display
+/// to stderr and returns Err with a one-line reason for the final summary.
+fn lint_one(path: &std::path::Path) -> std::result::Result<(), String> {
+    let src = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot read {}: {}", path.display(), e);
+            return Err(format!("read error: {}", e));
+        }
+    };
+
+    let program = match iratxo_core::compile_yaml(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: lint failed for {}", path.display());
+            // DslError's Display can be multi-line (snippet + caret). Indent
+            // each line so the file-path header stays visually distinct.
+            let full = e.to_string();
+            for line in full.lines() {
+                eprintln!("  {}", line);
+            }
+            // First line of the error display is the most useful one-liner
+            // for the trailing failed-files summary.
+            let one_line = full.lines().next().unwrap_or("lint failed").to_string();
+            return Err(one_line);
+        }
+    };
+
+    let n = program.rules.len();
+    println!("ok: {} ({} rule{})", program.name, n, if n == 1 { "" } else { "s" });
+    if !program.description.is_empty() {
+        println!("  description: {}", program.description);
+    }
+    let id_w = program.rules.iter().map(|r| r.id.len()).max().unwrap_or(0);
+    let kind_w = program.rules.iter().map(|r| predicate_summary(&r.when).len()).max().unwrap_or(0);
+    for r in &program.rules {
+        let kind = predicate_summary(&r.when);
+        let chain = if r.then.is_empty() {
+            String::new()
+        } else {
+            format!(" -> [{}]", r.then.join(", "))
+        };
+        let exp = match &r.verdict.explanation {
+            Some(s) if !s.is_empty() => format!(" \"{}\"", s),
+            _ => String::new(),
+        };
+        println!(
+            "  - {:<id_w$}  when {:<kind_w$}  => {} (conf {}){}{}",
+            r.id, kind, r.verdict.classify, r.verdict.confidence, chain, exp,
+            id_w = id_w, kind_w = kind_w,
+        );
+    }
+    println!("  default: {} (conf {})", program.default.classify, program.default.confidence);
     Ok(())
+}
+
+/// Resolve a user-supplied path into the set of YAML rule files it covers.
+/// Files are taken as-is. Directories are walked recursively; only entries
+/// ending in `.yaml` or `.yml` are returned.
+fn collect_yaml_files(path: &std::path::Path) -> std::result::Result<Vec<PathBuf>, String> {
+    let meta = fs::metadata(path).map_err(|e| format!("cannot stat: {}", e))?;
+    if meta.is_file() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+    if !meta.is_dir() {
+        return Err("not a file or directory".into());
+    }
+    let mut out = Vec::new();
+    walk_dir(path, &mut out).map_err(|e| format!("walk error: {}", e))?;
+    Ok(out)
+}
+
+fn walk_dir(dir: &std::path::Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let p = entry.path();
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            walk_dir(&p, out)?;
+        } else if ft.is_file() {
+            if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+                if ext.eq_ignore_ascii_case("yaml") || ext.eq_ignore_ascii_case("yml") {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One-line label of a predicate, for the verbose lint summary. Counts are
+/// included where they help spot accidentally-empty lists.
+fn predicate_summary(p: &iratxo_core::Predicate) -> String {
+    use iratxo_core::Predicate as P;
+    match p {
+        P::ContainsAny { needles, .. }    => format!("contains_any({})", needles.len()),
+        P::ContainsAll { needles, .. }    => format!("contains_all({})", needles.len()),
+        P::NotContainsAny { needles, .. } => format!("not_contains_any({})", needles.len()),
+        P::Regex { .. }                   => "regex".into(),
+        P::MinLength { tokens }           => format!("min_length({})", tokens),
+        P::MaxLength { tokens }           => format!("max_length({})", tokens),
+        P::SemanticMatch { examples, .. } => format!("semantic_match({})", examples.len()),
+        P::HasSection { titles }          => format!("has_section({})", titles.len()),
+        P::HasEntity { kind, min_count }  => format!("has_entity({:?},{})", kind, min_count),
+        P::ParagraphCount { .. }          => "paragraphs".into(),
+        P::MaxWordsPerSentence { max }    => format!("max_words_per_sentence({})", max),
+        P::LanguageIs { codes }           => format!("language_is({})", codes.join(",")),
+        P::HasUrlToDomain { domains, .. } => format!("has_url_to_domain({})", domains.len()),
+        P::MostlyUppercase { .. }         => "mostly_uppercase".into(),
+        P::TokenEntropyAbove { .. }       => "token_entropy_above".into(),
+        P::WordContainsAny { needles, .. } => format!("word_contains_any({})", needles.len()),
+        P::StartsWithAny { prefixes, .. } => format!("starts_with_any({})", prefixes.len()),
+        P::EndsWithAny { suffixes, .. }   => format!("ends_with_any({})", suffixes.len()),
+        P::SentenceCount { .. }           => "sentences".into(),
+        P::CharCount { .. }               => "chars".into(),
+        P::LineCount { .. }               => "lines".into(),
+        P::DigitRatioAbove { .. }         => "digit_ratio_above".into(),
+        P::PunctuationRatioAbove { .. }   => "punctuation_ratio_above".into(),
+        P::RepeatedCharRun { .. }         => "repeated_char_run".into(),
+        P::RepeatedToken { .. }           => "repeated_token".into(),
+        P::TypeTokenRatioBelow { .. }     => "type_token_ratio_below".into(),
+        P::HasInvisibleChars              => "has_invisible_chars".into(),
+        P::HasMixedScriptToken            => "has_mixed_script_token".into(),
+        P::ScriptIs { scripts }           => format!("script_is({})", scripts.join(",")),
+        P::All(items)                     => format!("all({})", items.len()),
+        P::Any(items)                     => format!("any({})", items.len()),
+        P::Not(_)                         => "not".into(),
+        P::Always                         => "always".into(),
+    }
 }
 
 fn default_engine_path() -> PathBuf {

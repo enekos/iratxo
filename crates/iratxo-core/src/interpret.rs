@@ -95,8 +95,16 @@ impl<'a> Ctx<'a> {
     }
 }
 
+fn regex_cache_key(pattern: &str, case_sensitive: bool) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    pattern.hash(&mut hasher);
+    case_sensitive.hash(&mut hasher);
+    hasher.finish()
+}
+
 thread_local! {
-    static GLOBAL_REGEX_CACHE: RefCell<FxHashMap<(String, bool), Option<Regex>>> = RefCell::new(FxHashMap::default());
+    static GLOBAL_REGEX_CACHE: RefCell<FxHashMap<u64, Option<Regex>>> = RefCell::new(FxHashMap::default());
 }
 
 fn regex_cache() -> RegexCache {
@@ -107,9 +115,9 @@ struct RegexCache;
 
 impl RegexCache {
     fn get(&self, pattern: &str, case_sensitive: bool) -> Option<Regex> {
+        let key = regex_cache_key(pattern, case_sensitive);
         GLOBAL_REGEX_CACHE.with(|cell| {
             let mut cache = cell.borrow_mut();
-            let key = (pattern.to_string(), case_sensitive);
             cache.entry(key).or_insert_with(|| {
                 let mut builder = RegexBuilder::new(pattern);
                 builder.case_insensitive(!case_sensitive);
