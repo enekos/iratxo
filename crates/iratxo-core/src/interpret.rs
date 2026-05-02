@@ -452,8 +452,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             false
         }
         Predicate::RepeatedToken { min_count } => {
-            use std::collections::HashMap as Map;
-            let mut counts: Map<String, u32> = Map::new();
+            let mut counts: FxHashMap<String, u32> = FxHashMap::default();
             let toks = crate::text::tokenize(input);
             with_metrics(|m| { m.tokenize_calls += 1; m.tokens_produced += toks.len() as u64; });
             for tok in toks {
@@ -469,7 +468,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             with_metrics(|m| { m.tokenize_calls += 1; m.tokens_produced += toks.len() as u64; });
             if toks.is_empty() { return false; }
             let total = toks.len() as f32;
-            let unique: std::collections::HashSet<&String> = toks.iter().collect();
+            let unique: rustc_hash::FxHashSet<&String> = toks.iter().collect();
             (unique.len() as f32 / total) <= *max_ratio
         }
         Predicate::HasInvisibleChars => input.chars().any(is_invisible_char),
