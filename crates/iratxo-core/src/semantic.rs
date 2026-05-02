@@ -8,7 +8,7 @@
 //! The signal is bag-of-words level — good for "this text is talking about
 //! X" matches, not for syntactic reasoning.
 
-use crate::text::{detect_language, is_stopword, stem, tokenize, Language};
+use crate::text::{detect_language, is_stopword, stem, tokenize_iter, Language};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -105,9 +105,10 @@ fn canonicalize_stem(stem: &str, extra: Option<&SynonymIndex>, builtin: &Synonym
 
 fn embed(text: &str, lang: Language, extra: Option<&SynonymIndex>, builtin: &SynonymIndex) -> [f32; DIM] {
     let mut v = [0f32; DIM];
-    for tok in tokenize(text) {
-        if is_stopword(&tok, lang) { continue; }
-        let stemmed = stem(&tok, lang);
+    for tok in tokenize_iter(text) {
+        let lower = tok.to_lowercase();
+        if is_stopword(&lower, lang) { continue; }
+        let stemmed = stem(&lower, lang);
         if stemmed.chars().count() < 2 { continue; }
         let canonical = canonicalize_stem(&stemmed, extra, builtin);
         let h = fnv1a64(canonical.as_bytes());

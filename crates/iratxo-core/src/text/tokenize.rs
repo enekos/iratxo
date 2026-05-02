@@ -2,9 +2,14 @@
 //! digit (Unicode-class-aware), lowercases each token. Mirrors marrow's
 //! `wordSplitter = regexp.MustCompile("[^\\p{L}\\p{N}]+")`.
 
-pub fn tokenize(text: &str) -> Vec<String> {
+/// Zero-allocation token iterator. Yields borrowed slices.
+pub fn tokenize_iter(text: &str) -> impl Iterator<Item = &str> + '_ {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|s| !s.is_empty())
+}
+
+pub fn tokenize(text: &str) -> Vec<String> {
+    tokenize_iter(text)
         .map(|s| s.to_lowercase())
         .collect()
 }
