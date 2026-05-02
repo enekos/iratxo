@@ -600,10 +600,24 @@ fn url_hosts_impl(input: &str) -> Vec<String> {
 /// Pure ASCII strings of length 16 with full alphanum diversity sit ~5 bits.
 #[inline]
 fn shannon_entropy(s: &str) -> f32 {
+    if s.is_empty() { return 0.0; }
+    // Fast path for ASCII-only strings: use a fixed-size array instead of HashMap.
+    if s.is_ascii() {
+        let mut counts = [0u32; 128];
+        let mut total = 0u32;
+        for b in s.as_bytes() {
+            counts[*b as usize] += 1;
+            total += 1;
+        }
+        let n = total as f32;
+        return counts.iter().filter(|&&c| c > 0).map(|&c| {
+            let p = c as f32 / n;
+            -p * p.log2()
+        }).sum();
+    }
     let mut counts: HashMap<char, u32> = HashMap::new();
     let mut total = 0u32;
     for c in s.chars() { *counts.entry(c).or_insert(0) += 1; total += 1; }
-    if total == 0 { return 0.0; }
     let n = total as f32;
     counts.values().map(|&c| {
         let p = c as f32 / n;
