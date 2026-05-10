@@ -42,6 +42,8 @@ struct RuleTriggerBits {
     bits: u32,
     // 255 = no winner, otherwise index of winning rule in triggered Vec.
     winner_idx: u8,
+    // Number of rules with explanations (for pre-allocating explanations Vec).
+    explanation_count: u8,
 }
 
 impl RuleTriggerBits {
@@ -57,7 +59,7 @@ impl RuleTriggerBits {
 
     #[inline]
     fn new() -> Self {
-        RuleTriggerBits { bits: 0, winner_idx: 255 }
+        RuleTriggerBits { bits: 0, winner_idx: 255, explanation_count: 0 }
     }
 }
 
@@ -66,6 +68,7 @@ impl RuleTriggerBits {
 struct RuleTriggerVec {
     vec: Vec<bool>,
     winner_idx: u8,
+    explanation_count: u8,
 }
 
 impl RuleTriggerVec {
@@ -81,7 +84,7 @@ impl RuleTriggerVec {
 
     #[inline]
     fn new(len: usize) -> Self {
-        RuleTriggerVec { vec: vec![false; len], winner_idx: 255 }
+        RuleTriggerVec { vec: vec![false; len], winner_idx: 255, explanation_count: 0 }
     }
 }
 
@@ -121,6 +124,22 @@ impl CachedTriggerResult {
         match self {
             CachedTriggerResult::Small(bits) => bits.winner_idx = idx,
             CachedTriggerResult::Large(vec) => vec.winner_idx = idx,
+        }
+    }
+
+    #[inline]
+    fn explanation_count(&self) -> u8 {
+        match self {
+            CachedTriggerResult::Small(bits) => bits.explanation_count,
+            CachedTriggerResult::Large(vec) => vec.explanation_count,
+        }
+    }
+
+    #[inline]
+    fn set_explanation_count(&mut self, count: u8) {
+        match self {
+            CachedTriggerResult::Small(bits) => bits.explanation_count = count,
+            CachedTriggerResult::Large(vec) => vec.explanation_count = count,
         }
     }
 
@@ -315,7 +334,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
         };
         let classification = winner.map(|t| t.classification).unwrap_or(&program.default.classify);
         let confidence = winner.map(|t| t.confidence).unwrap_or(program.default.confidence);
-        let mut explanations: Vec<&'a str> = Vec::with_capacity(triggered.len() / 2);
+        let mut explanations: Vec<&'a str> = Vec::with_capacity(triggers.explanation_count() as usize);
         for t in &triggered {
             if let Some(e) = t.explanation {
                 explanations.push(e);
@@ -359,9 +378,11 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
     let winner = triggered
         .iter()
         .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    let explanation_count = triggered.iter().filter(|t| t.explanation.is_some()).count() as u8;
     trigger_bits.set_winner_idx(winner.map(|w| {
         triggered.iter().position(|t| std::ptr::eq(t as *const _, w as *const _)).unwrap_or(255) as u8
     }).unwrap_or(255));
+    trigger_bits.set_explanation_count(explanation_count);
     RULE_TRIGGER_VEC_CACHE.with(|cell| {
         let mut cache = cell.borrow_mut();
         cache.insert(cache_key, trigger_bits);
