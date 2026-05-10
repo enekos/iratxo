@@ -302,7 +302,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
     let cache_key = (program_ptr, ctx.input_hash);
     let cached = RULE_TRIGGER_VEC_CACHE.with(|cell| cell.borrow().get(&cache_key).cloned());
     if let Some(triggers) = cached {
-        let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
+        let mut visited: Option<HashSet<&'a str>> = None;
         let mut triggered_count = 0usize;
         for (i, rule) in program.rules.iter().enumerate() {
             if program.chained_target_bits & (1u64 << i) != 0 { continue; }
@@ -356,7 +356,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
         };
     }
 
-    let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
+    let mut visited: Option<HashSet<&'a str>> = None;
     let mut trigger_bits = CachedTriggerResult::new(program.rules.len());
     for (i, rule) in program.rules.iter().enumerate() {
         if program.chained_target_bits & (1u64 << i) != 0 {
@@ -452,7 +452,7 @@ fn eval_rule_ref<'a>(
     rules: &'a [Rule],
     ctx: &Ctx,
     out: &mut Vec<TriggeredRuleRef<'a>>,
-    visited: &mut HashSet<&'a str>,
+    visited: &mut Option<HashSet<&'a str>>,
     depth: u64,
 ) {
     with_metrics(|m| {
@@ -461,7 +461,8 @@ fn eval_rule_ref<'a>(
             m.max_chain_depth = depth;
         }
     });
-    if !visited.insert(rule.id.as_str()) { return; }
+    let visited_set = visited.get_or_insert_with(|| HashSet::with_capacity(rules.len()));
+    if !visited_set.insert(rule.id.as_str()) { return; }
     if !eval_predicate(&rule.when, ctx) { return; }
     with_metrics(|m| m.triggered_rules += 1);
     out.push(TriggeredRuleRef {
