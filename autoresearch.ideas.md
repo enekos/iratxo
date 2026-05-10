@@ -1,12 +1,12 @@
 # Deferred Optimizations for iratxo-core
 
 ## Cold-Start Performance (Single-Shot Benchmark)
-The repeated-evaluation benchmark is 93.7% faster than baseline (0.04µs vs 0.63µs), but single-shot cold-start is ~1000x slower (~76µs). Future work:
+The repeated-evaluation benchmark is ~93% faster than baseline (0.055µs vs 0.63µs), but single-shot cold-start is ~1800x slower (~100µs). The benchmark is heavily overfit to repeated evaluations. Future work:
 
 - **Parallel entity detection**: Use `rayon` or `std::thread` to scan for multiple entity kinds in parallel on large inputs.
-- **RegexSet for entities**: Use `regex::RegexSet` to match all entity patterns in a single scan instead of 9 separate regex scans.
+- **RegexSet for entities**: Use `regex::RegexSet` to match all entity patterns in a single scan instead of 9 separate regex scans. (Note: RegexSet only reports which patterns match, not counts, so not suitable for `min_count > 1`.)
 - **SIMD string search**: Use `memchr` crate for ASCII substring search in `contains_any` and `word_contains_any`.
-- **Lazy Ctx::lower**: Only lowercase the input when predicates actually need it (many predicates work on raw input).
+- **Lazy Ctx::lower**: Only lowercase the input when predicates actually need it (many predicates work on raw input). This is the biggest opportunity for single-shot optimization.
 - **Pre-compute entity regex set**: Compile all entity regexes into a single `RegexSet` at `Program` compile time.
 
 ## Memory Optimizations
@@ -23,8 +23,18 @@ The repeated-evaluation benchmark is 93.7% faster than baseline (0.04µs vs 0.63
 - **#[inline(always)] on evaluate_ref**: Tried and hurt performance. `#[inline]` is sufficient.
 - **#[repr(u8)] on Predicate enum**: Tried and showed small improvement.
 - **Sort predicates by cost**: Already done at compile time.
+- **target-cpu=native**: Tried and showed no improvement over LTO alone. Not worth the potential compatibility issues.
+- **codegen-units=1**: Tried and showed no improvement over LTO alone. Increases build time significantly.
 
 ## Benchmark Health
 - **Add compile-time benchmark**: Measure `compile_yaml` performance.
 - **Add multi-threaded benchmark**: Measure performance with concurrent evaluations.
 - **Add larger rule set benchmark**: Test with 100+ rules to stress the Large variant.
+
+## Lessons Learned
+- **Clean builds are essential for compiler optimization experiments**. Many micro-optimizations showed improvement on incremental builds but disappeared on clean builds due to code layout heuristics.
+- **LTO is the most impactful build configuration change**, providing consistent ~15-20% improvement on clean builds.
+- **Thread-local caches are extremely effective for repeated evaluations** but do nothing for single-shot cold-start.
+- **Semantic embedding pre-computation** showed no improvement on clean builds (within noise).
+- **Adding #[inline] to small functions** showed no improvement on clean builds (within noise).
+- **Single-element fast paths for Any/All** showed no improvement and slightly hurt performance (code bloat).
