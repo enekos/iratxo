@@ -1441,16 +1441,32 @@ fn char_stats(input: &str, input_hash: u64) -> CharStats {
         return stats;
     }
     let mut stats = CharStats { letters: 0, upper: 0, non_whitespace: 0, digits: 0, punct: 0, has_invisible: false };
-    for c in input.chars() {
-        if !c.is_whitespace() {
-            stats.non_whitespace += 1;
-            if c.is_alphabetic() {
-                stats.letters += 1;
-                if c.is_uppercase() { stats.upper += 1; }
+    // Fast path for ASCII-only inputs: byte-level iteration is much faster
+    // than char-level, and none of the invisible chars are ASCII.
+    if input.is_ascii() {
+        for &b in input.as_bytes() {
+            if b != b' ' && b != b'\n' && b != b'\t' && b != b'\r' {
+                stats.non_whitespace += 1;
+                if b.is_ascii_alphabetic() {
+                    stats.letters += 1;
+                    if b.is_ascii_uppercase() { stats.upper += 1; }
+                }
+                if b.is_ascii_digit() { stats.digits += 1; }
+                if b.is_ascii_punctuation() { stats.punct += 1; }
             }
-            if c.is_ascii_digit() { stats.digits += 1; }
-            if c.is_ascii_punctuation() { stats.punct += 1; }
-            if is_invisible_char(c) { stats.has_invisible = true; }
+        }
+    } else {
+        for c in input.chars() {
+            if !c.is_whitespace() {
+                stats.non_whitespace += 1;
+                if c.is_alphabetic() {
+                    stats.letters += 1;
+                    if c.is_uppercase() { stats.upper += 1; }
+                }
+                if c.is_ascii_digit() { stats.digits += 1; }
+                if c.is_ascii_punctuation() { stats.punct += 1; }
+                if is_invisible_char(c) { stats.has_invisible = true; }
+            }
         }
     }
     CHAR_STATS_CACHE.with(|cell| {
