@@ -71,6 +71,9 @@ impl RuleTriggerBits {
 }
 
 thread_local! {
+    /// Combined cache for (input_ptr, lowercased_input, token_offsets) to avoid
+    /// both hashing and lower-cache lookup for repeated inputs.
+    static CTX_DATA_CACHE: RefCell<Option<(u64, Rc<str>, Rc<[(usize, usize)]>)>> = RefCell::new(None);
     /// Cache for (input_ptr, input_hash) to avoid re-hashing the same input string.
     static LAST_INPUT_HASH: std::cell::Cell<(u64, u64)> = std::cell::Cell::new((0, 0));
     static METRICS: RefCell<Option<EvalMetrics>> = RefCell::new(None);
@@ -282,7 +285,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
 
     let classification = winner.map(|t| t.classification).unwrap_or(&program.default.classify);
     let confidence = winner.map(|t| t.confidence).unwrap_or(program.default.confidence);
-    let mut explanations: Vec<&'a str> = Vec::with_capacity(triggered.len() / 4);
+    let mut explanations: Vec<&'a str> = Vec::with_capacity(triggered.len() / 2);
     for t in &triggered {
         if let Some(e) = t.explanation {
             explanations.push(e);
@@ -393,27 +396,46 @@ struct Ctx<'a> {
 
 impl<'a> Ctx<'a> {
     fn new(input: &'a str) -> Self {
+        let ptr = input.as_ptr() as u64;
+
         // Fast path: if this is the exact same input pointer as last time,
-        // reuse the cached hash. This avoids hashing overhead for repeated
-        // evaluate() calls on the same input string.
-        let input_hash = LAST_INPUT_HASH.with(|cell| {
-            let (last_ptr, last_hash) = cell.get();
-            let ptr = input.as_ptr() as u64;
-            if last_ptr == ptr {
-                last_hash
-            } else {
+        // reuse the cached lowercased input and token offsets directly.
+        let cached = CTX_DATA_CACHE.with(|cell| {
+            let c = cell.borrow();
+            c.as_ref().and_then(|(last_ptr, lower, offsets)| {
+                if *last_ptr == ptr {
+                    Some((Rc::clone(lower), Rc::clone(offsets)))
+                } else {
+                    None
+                }
+            })
+        });
+        let (lower, token_offsets, input_hash) = match cached {
+            Some((l, o)) => {
+                // Reconstruct hash from the cached data to keep input_hash consistent.
+                // We still need input_hash for other caches. Since hashing is expensive,
+                // we store it alongside in a separate cache.
+                let hash = LAST_INPUT_HASH.with(|cell| {
+                    let (last_ptr, last_hash) = cell.get();
+                    if last_ptr == ptr { last_hash } else { 0 }
+                });
+                let input_hash = if hash != 0 {
+                    hash
+                } else {
+                    let mut hasher = FxHasher::default();
+                    input.hash(&mut hasher);
+                    let h = hasher.finish();
+                    LAST_INPUT_HASH.with(|cell| cell.set((ptr, h)));
+                    h
+                };
+                (l, o, input_hash)
+            }
+            None => {
                 let mut hasher = FxHasher::default();
                 input.hash(&mut hasher);
-                let h = hasher.finish();
-                cell.set((ptr, h));
-                h
-            }
-        });
+                let input_hash = hasher.finish();
+                LAST_INPUT_HASH.with(|cell| cell.set((ptr, input_hash)));
 
-        let cached = LOWER_CACHE.with(|cell| cell.borrow().get(&input_hash).cloned());
-        let (lower, token_offsets) = match cached {
-            Some((l, o)) => (l, o),
-            None => {
                 let s = if input.is_ascii() {
                     input.to_ascii_lowercase()
                 } else {
@@ -431,7 +453,10 @@ impl<'a> Ctx<'a> {
                     cache.insert(input_hash, (Rc::clone(&lower_rc), Rc::clone(&offsets_rc)));
                     if cache.len() > 256 { cache.clear(); }
                 });
-                (lower_rc, offsets_rc)
+                CTX_DATA_CACHE.with(|cell| {
+                    *cell.borrow_mut() = Some((ptr, Rc::clone(&lower_rc), Rc::clone(&offsets_rc)));
+                });
+                (lower_rc, offsets_rc, input_hash)
             }
         };
 
