@@ -419,6 +419,23 @@ fn bench_workload(name: &str, program: &iratxo_core::Program, input: &str, itera
     println!("METRIC {}_lower_bytes={}", name, metrics.lower_bytes);
 }
 
+fn bench_single_shot(name: &str, program: &iratxo_core::Program, base_input: &str, count: usize) {
+    // Generate unique inputs to defeat all cross-evaluation caches.
+    // Each input has a different hash, so no cache hits occur.
+    let inputs: Vec<String> = (0..count).map(|i| format!("{} [unique-{}]", base_input, i)).collect();
+
+    let start = Instant::now();
+    for input in &inputs {
+        let _ = iratxo_core::evaluate_ref(program, input);
+    }
+    let elapsed = start.elapsed();
+    let total_us = elapsed.as_micros() as f64;
+    let per_iter_us = total_us / count as f64;
+
+    println!("METRIC {}_total_µs={}", name, total_us);
+    println!("METRIC {}_per_iter_µs={}", name, per_iter_us);
+}
+
 fn main() {
     let complex = iratxo_core::compile_yaml(COMPLEX_YAML).unwrap();
     let nested = iratxo_core::compile_yaml(NESTED_DEEP_YAML).unwrap();
@@ -429,4 +446,9 @@ fn main() {
     bench_workload("complex_mixed", &complex, LARGE_DOC, iters);
     bench_workload("nested_deep", &nested, LARGE_DOC, iters);
     bench_workload("large_doc_entities", &complex, &large_doc, iters / 2);
+
+    // Single-shot (cold-start) benchmarks — unique inputs defeat all caches
+    bench_single_shot("single_shot_complex", &complex, LARGE_DOC, 100);
+    bench_single_shot("single_shot_nested", &nested, LARGE_DOC, 100);
+    bench_single_shot("single_shot_large_doc", &complex, &large_doc, 50);
 }
