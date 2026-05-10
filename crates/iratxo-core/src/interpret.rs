@@ -53,6 +53,8 @@ thread_local! {
     static LOWER_CACHE: RefCell<FxHashMap<u64, (String, Vec<(usize, usize)>)>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for character statistics keyed by input_hash.
     static CHAR_STATS_CACHE: RefCell<FxHashMap<u64, CharStats>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for input shape counts keyed by input_hash.
+    static COUNTS_CACHE: RefCell<FxHashMap<u64, Counts>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -239,6 +241,16 @@ struct CharStats {
     digits: u32,
     punct: u32,
     has_invisible: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Counts {
+    paragraphs: usize,
+    sentences: usize,
+    lines: usize,
+    chars: usize,
+    tokens: usize,
+    max_words_per_sentence: usize,
 }
 
 struct Ctx<'a> {
@@ -463,8 +475,8 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         Predicate::Regex { pattern, case_sensitive } => {
             Ctx::regex(pattern, *case_sensitive).map_or(false, |re| re.is_match(input))
         }
-        Predicate::MinLength { tokens } => token_count(input) >= *tokens as usize,
-        Predicate::MaxLength { tokens } => token_count(input) <= *tokens as usize,
+        Predicate::MinLength { tokens } => counts(input, ctx.input_hash).tokens >= *tokens as usize,
+        Predicate::MaxLength { tokens } => counts(input, ctx.input_hash).tokens <= *tokens as usize,
         Predicate::All(items) => {
             let r = items.iter().all(|q| eval_predicate(q, ctx));
             if !r { with_metrics(|m| m.all_short_circuits += 1); }
@@ -489,10 +501,10 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             ctx.count_entities(*kind, *min_count)
         }
         Predicate::ParagraphCount { min, max } => {
-            let n = paragraph_count(input);
+            let n = counts(input, ctx.input_hash).paragraphs;
             min.map_or(true, |m| n >= m as usize) && max.map_or(true, |m| n <= m as usize)
         }
-        Predicate::MaxWordsPerSentence { max } => max_words_per_sentence(input) <= *max as usize,
+        Predicate::MaxWordsPerSentence { max } => counts(input, ctx.input_hash).max_words_per_sentence <= *max as usize,
         Predicate::LanguageIs { codes } => {
             let detected = ctx.detect_language().code();
             codes.iter().any(|c| c == detected)
@@ -591,15 +603,15 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             suffixes.iter().any(|s| hay.ends_with(s.as_str()))
         }
         Predicate::SentenceCount { min, max } => {
-            let n = sentence_count(input);
+            let n = counts(input, ctx.input_hash).sentences;
             min.map_or(true, |m| n >= m as usize) && max.map_or(true, |m| n <= m as usize)
         }
         Predicate::CharCount { min, max } => {
-            let n = input.chars().count();
+            let n = counts(input, ctx.input_hash).chars;
             min.map_or(true, |m| n >= m as usize) && max.map_or(true, |m| n <= m as usize)
         }
         Predicate::LineCount { min, max } => {
-            let n = if input.is_empty() { 0 } else { input.lines().count() };
+            let n = counts(input, ctx.input_hash).lines;
             min.map_or(true, |m| n >= m as usize) && max.map_or(true, |m| n <= m as usize)
         }
         Predicate::DigitRatioAbove { min_ratio } => {
@@ -978,6 +990,28 @@ fn char_stats(input: &str, input_hash: u64) -> CharStats {
         if cache.len() > 256 { cache.clear(); }
     });
     stats
+}
+
+#[inline]
+fn counts(input: &str, input_hash: u64) -> Counts {
+    let cached = COUNTS_CACHE.with(|cell| cell.borrow().get(&input_hash).copied());
+    if let Some(c) = cached {
+        return c;
+    }
+    let c = Counts {
+        paragraphs: paragraph_count(input),
+        sentences: sentence_count(input),
+        lines: if input.is_empty() { 0 } else { input.lines().count() },
+        chars: input.chars().count(),
+        tokens: token_count(input),
+        max_words_per_sentence: max_words_per_sentence(input),
+    };
+    COUNTS_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        cache.insert(input_hash, c);
+        if cache.len() > 256 { cache.clear(); }
+    });
+    c
 }
 
 /// Zero-width and BOM-style invisible characters that appear in homoglyph/
