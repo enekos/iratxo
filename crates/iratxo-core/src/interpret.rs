@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash as _, Hasher};
+use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHasher};
 
 /// Detailed metrics for a single `evaluate` call.
@@ -52,7 +53,8 @@ thread_local! {
     /// Cross-evaluate cache for has_section keyed by (input_hash, titles_hash).
     static SECTION_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for lowercased input and token offsets keyed by input_hash.
-    static LOWER_CACHE: RefCell<FxHashMap<u64, (String, Vec<(usize, usize)>)>> = RefCell::new(FxHashMap::default());
+    /// Uses Rc to avoid cloning large strings on cache hit.
+    static LOWER_CACHE: RefCell<FxHashMap<u64, (Rc<str>, Rc<[(usize, usize)]>)>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for character statistics keyed by input_hash.
     static CHAR_STATS_CACHE: RefCell<FxHashMap<u64, CharStats>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for input shape counts keyed by input_hash.
@@ -347,9 +349,9 @@ struct Counts {
 
 struct Ctx<'a> {
     input: &'a str,
-    lower: String,
+    lower: Rc<str>,
     input_hash: u64,
-    token_offsets: Vec<(usize, usize)>,
+    token_offsets: Rc<[(usize, usize)]>,
 }
 
 impl<'a> Ctx<'a> {
@@ -385,12 +387,14 @@ impl<'a> Ctx<'a> {
                     m.lower_bytes += s.len() as u64;
                 });
                 let offsets: Vec<_> = crate::text::tokenize_offsets(&s).collect();
+                let lower_rc: Rc<str> = s.into();
+                let offsets_rc: Rc<[(usize, usize)]> = offsets.into();
                 LOWER_CACHE.with(|cell| {
                     let mut cache = cell.borrow_mut();
-                    cache.insert(input_hash, (s.clone(), offsets.clone()));
+                    cache.insert(input_hash, (Rc::clone(&lower_rc), Rc::clone(&offsets_rc)));
                     if cache.len() > 256 { cache.clear(); }
                 });
-                (s, offsets)
+                (lower_rc, offsets_rc)
             }
         };
 
