@@ -383,6 +383,7 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
         if titles.is_empty() {
             return Err(DslError::Validation("has_section requires at least one title".into()));
         }
+        let titles = titles.into_iter().map(|t| t.trim().to_lowercase()).collect();
         variants.push(Predicate::HasSection { titles });
     }
     if let Some(e) = p.has_entity {
