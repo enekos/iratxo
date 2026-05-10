@@ -1194,22 +1194,45 @@ fn strip_html_tags(s: &str) -> String {
 }
 
 /// Extract hostnames (lowercased) from `http(s)://` URLs in the input.
-/// Strips userinfo, port, and trailing path. Robust enough for predicate use,
-/// not a general URL parser.
+/// Uses memchr for fast SIMD-accelerated URL discovery, then manual
+/// host extraction. Much faster than regex for ASCII inputs.
 #[inline]
 fn url_hosts_impl(input: &str) -> Vec<String> {
-    use std::sync::OnceLock;
-    static URL: OnceLock<Regex> = OnceLock::new();
-    let re = URL.get_or_init(|| Regex::new(r"(?i)\bhttps?://([^\s/?#]+)").unwrap());
-    re.captures_iter(input)
-        .filter_map(|c| c.get(1))
-        .map(|m| {
-            let mut host = m.as_str().to_lowercase();
-            if let Some(at) = host.rfind('@') { host = host[at + 1..].to_string(); }
-            if let Some(colon) = host.find(':') { host.truncate(colon); }
-            host
-        })
-        .collect()
+    let mut hosts = Vec::new();
+    let input_bytes = input.as_bytes();
+    // Find all "http://" and "https://" occurrences using memchr.
+    for pos in memchr::memmem::find_iter(input_bytes, b"http://") {
+        let start = pos + 7; // skip "http://"
+        if let Some(host) = extract_host(input_bytes, start) {
+            hosts.push(host);
+        }
+    }
+    for pos in memchr::memmem::find_iter(input_bytes, b"https://") {
+        let start = pos + 8; // skip "https://"
+        if let Some(host) = extract_host(input_bytes, start) {
+            hosts.push(host);
+        }
+    }
+    hosts
+}
+
+#[inline]
+fn extract_host(input: &[u8], start: usize) -> Option<String> {
+    // Host runs until whitespace, '/', '?', or '#'.
+    let end = input[start..].iter().position(|&b| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'/' | b'?' | b'#')).unwrap_or(input.len() - start);
+    let host_bytes = &input[start..start + end];
+    // Convert to string (safe because input is valid UTF-8).
+    let host_str = std::str::from_utf8(host_bytes).ok()?;
+    // Strip userinfo (e.g., user:pass@host).
+    let mut host = host_str.to_lowercase();
+    if let Some(at) = host.rfind('@') {
+        host = host[at + 1..].to_string();
+    }
+    // Strip port.
+    if let Some(colon) = host.find(':') {
+        host.truncate(colon);
+    }
+    if host.is_empty() { None } else { Some(host) }
 }
 
 /// Shannon entropy in bits over the empirical char distribution of `s`.
