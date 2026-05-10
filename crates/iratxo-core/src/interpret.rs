@@ -183,9 +183,8 @@ impl CachedTriggerResult {
 }
 
 thread_local! {
-    /// Combined cache for (input_ptr, input_hash, lowercased_input, token_offsets) to avoid
-    /// both hashing and lower-cache lookup for repeated inputs.
-    static CTX_DATA_CACHE: RefCell<Option<(u64, u64, Rc<str>, Rc<[(usize, usize)]>)>> = RefCell::new(None);
+    /// Combined cache for (input_ptr, input_hash) to avoid re-hashing repeated inputs.
+    static CTX_DATA_CACHE: RefCell<Option<(u64, u64)>> = RefCell::new(None);
     static METRICS: RefCell<Option<EvalMetrics>> = RefCell::new(None);
     static METRICS_ENABLED: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// Cross-evaluate cache for entity counts keyed by (input_hash, kind, min_count).
@@ -557,9 +556,8 @@ struct Counts {
 
 struct Ctx<'a> {
     input: &'a str,
-    lower: Rc<str>,
     input_hash: u64,
-    token_offsets: Rc<[(usize, usize)]>,
+    lower_and_offsets: std::cell::OnceCell<(Rc<str>, Rc<[(usize, usize)]>)>,
 }
 
 impl<'a> Ctx<'a> {
@@ -568,58 +566,75 @@ impl<'a> Ctx<'a> {
         let ptr = input.as_ptr() as u64;
 
         // Fast path: if this is the exact same input pointer as last time,
-        // reuse the cached lowercased input, token offsets, and hash directly.
+        // reuse the cached hash directly.
         let cached = CTX_DATA_CACHE.with(|cell| {
             let c = cell.borrow();
-            c.as_ref().and_then(|(last_ptr, last_hash, lower, offsets)| {
+            c.as_ref().and_then(|(last_ptr, last_hash)| {
                 if *last_ptr == ptr {
-                    Some((*last_hash, Rc::clone(lower), Rc::clone(offsets)))
+                    Some(*last_hash)
                 } else {
                     None
                 }
             })
         });
-        let (lower, token_offsets, input_hash) = match cached {
-            Some((h, l, o)) => (l, o, h),
+        let input_hash = match cached {
+            Some(h) => h,
             None => {
                 let mut hasher = FxHasher::default();
                 input.hash(&mut hasher);
-                let input_hash = hasher.finish();
-
-                let s = if input.is_ascii() {
-                    input.to_ascii_lowercase()
-                } else {
-                    input.to_lowercase()
-                };
-                with_metrics(|m| {
-                    m.lower_allocations += 1;
-                    m.lower_bytes += s.len() as u64;
-                });
-                let offsets: Vec<_> = crate::text::tokenize_offsets(&s).collect();
-                let lower_rc: Rc<str> = s.into();
-                let offsets_rc: Rc<[(usize, usize)]> = offsets.into();
-                LOWER_CACHE.with(|cell| {
-                    let mut cache = cell.borrow_mut();
-                    cache.insert(input_hash, (Rc::clone(&lower_rc), Rc::clone(&offsets_rc)));
-                    if cache.len() > 256 { cache.clear(); }
-                });
+                let h = hasher.finish();
                 CTX_DATA_CACHE.with(|cell| {
-                    *cell.borrow_mut() = Some((ptr, input_hash, Rc::clone(&lower_rc), Rc::clone(&offsets_rc)));
+                    *cell.borrow_mut() = Some((ptr, h));
                 });
-                (lower_rc, offsets_rc, input_hash)
+                h
             }
         };
 
         Ctx {
             input,
-            lower,
             input_hash,
-            token_offsets,
+            lower_and_offsets: std::cell::OnceCell::new(),
         }
     }
 
+    fn lower_and_offsets(&self) -> &(Rc<str>, Rc<[(usize, usize)]>) {
+        self.lower_and_offsets.get_or_init(|| {
+            let cached = LOWER_CACHE.with(|cell| {
+                cell.borrow().get(&self.input_hash).map(|(l, o)| (Rc::clone(l), Rc::clone(o)))
+            });
+            match cached {
+                Some(pair) => pair,
+                None => {
+                    let s = if self.input.is_ascii() {
+                        self.input.to_ascii_lowercase()
+                    } else {
+                        self.input.to_lowercase()
+                    };
+                    with_metrics(|m| {
+                        m.lower_allocations += 1;
+                        m.lower_bytes += s.len() as u64;
+                    });
+                    let offsets: Vec<_> = crate::text::tokenize_offsets(&s).collect();
+                    let lower_rc: Rc<str> = s.into();
+                    let offsets_rc: Rc<[(usize, usize)]> = offsets.into();
+                    let pair = (Rc::clone(&lower_rc), Rc::clone(&offsets_rc));
+                    LOWER_CACHE.with(|cell| {
+                        let mut cache = cell.borrow_mut();
+                        cache.insert(self.input_hash, pair.clone());
+                        if cache.len() > 256 { cache.clear(); }
+                    });
+                    pair
+                }
+            }
+        })
+    }
+
     fn lower(&self) -> &str {
-        &self.lower
+        &self.lower_and_offsets().0
+    }
+
+    fn token_offsets(&self) -> &[(usize, usize)] {
+        &self.lower_and_offsets().1
     }
 
     fn regex(pattern: &str, case_sensitive: bool) -> Option<Regex> {
@@ -1033,7 +1048,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         Predicate::RepeatedToken { min_count } => {
             let mut counts: FxHashMap<&str, u32> = FxHashMap::default();
             let mut produced = 0u64;
-            for (start, end) in ctx.token_offsets.iter() {
+            for (start, end) in ctx.token_offsets().iter() {
                 produced += 1;
                 let tok = &ctx.lower()[*start..*end];
                 if tok.chars().count() < 2 { continue; }
@@ -1050,7 +1065,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         Predicate::TypeTokenRatioBelow { max_ratio } => {
             let mut total = 0u64;
             let mut unique = rustc_hash::FxHashSet::default();
-            for (start, end) in ctx.token_offsets.iter() {
+            for (start, end) in ctx.token_offsets().iter() {
                 total += 1;
                 unique.insert(&ctx.lower()[*start..*end]);
             }
