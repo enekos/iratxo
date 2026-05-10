@@ -35,6 +35,8 @@ pub struct EvalMetrics {
 }
 
 thread_local! {
+    /// Cache for (input_ptr, input_hash) to avoid re-hashing the same input string.
+    static LAST_INPUT_HASH: std::cell::Cell<(u64, u64)> = std::cell::Cell::new((0, 0));
     static METRICS: RefCell<Option<EvalMetrics>> = RefCell::new(None);
     static METRICS_ENABLED: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// Cross-evaluate cache for entity counts keyed by (input_hash, kind, min_count).
@@ -351,9 +353,22 @@ struct Ctx<'a> {
 
 impl<'a> Ctx<'a> {
     fn new(input: &'a str) -> Self {
-        let mut hasher = FxHasher::default();
-        input.hash(&mut hasher);
-        let input_hash = hasher.finish();
+        // Fast path: if this is the exact same input pointer as last time,
+        // reuse the cached hash. This avoids hashing overhead for repeated
+        // evaluate() calls on the same input string.
+        let input_hash = LAST_INPUT_HASH.with(|cell| {
+            let (last_ptr, last_hash) = cell.get();
+            let ptr = input.as_ptr() as u64;
+            if last_ptr == ptr {
+                last_hash
+            } else {
+                let mut hasher = FxHasher::default();
+                input.hash(&mut hasher);
+                let h = hasher.finish();
+                cell.set((ptr, h));
+                h
+            }
+        });
 
         let cached = LOWER_CACHE.with(|cell| cell.borrow().get(&input_hash).cloned());
         let (lower, token_offsets) = match cached {
