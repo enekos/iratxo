@@ -456,24 +456,31 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             false
         }
         Predicate::RepeatedToken { min_count } => {
-            let mut counts: FxHashMap<String, u32> = FxHashMap::default();
-            let toks = crate::text::tokenize(input);
-            with_metrics(|m| { m.tokenize_calls += 1; m.tokens_produced += toks.len() as u64; });
-            for tok in toks {
+            let mut counts: FxHashMap<&str, u32> = FxHashMap::default();
+            let mut produced = 0u64;
+            for tok in crate::text::tokenize_iter(ctx.lower()) {
+                produced += 1;
                 if tok.chars().count() < 2 { continue; }
                 let entry = counts.entry(tok).or_insert(0);
                 *entry += 1;
-                if *entry >= *min_count { return true; }
+                if *entry >= *min_count {
+                    with_metrics(|m| { m.tokenize_calls += 1; m.tokens_produced += produced; });
+                    return true;
+                }
             }
+            with_metrics(|m| { m.tokenize_calls += 1; m.tokens_produced += produced; });
             false
         }
         Predicate::TypeTokenRatioBelow { max_ratio } => {
-            let toks = crate::text::tokenize(input);
-            with_metrics(|m| { m.tokenize_calls += 1; m.tokens_produced += toks.len() as u64; });
-            if toks.is_empty() { return false; }
-            let total = toks.len() as f32;
-            let unique: rustc_hash::FxHashSet<&String> = toks.iter().collect();
-            (unique.len() as f32 / total) <= *max_ratio
+            let mut total = 0u64;
+            let mut unique = rustc_hash::FxHashSet::default();
+            for tok in crate::text::tokenize_iter(ctx.lower()) {
+                total += 1;
+                unique.insert(tok);
+            }
+            with_metrics(|m| { m.tokenize_calls += 1; m.tokens_produced += total; });
+            if total == 0 { return false; }
+            (unique.len() as f32 / total as f32) <= *max_ratio
         }
         Predicate::HasInvisibleChars => input.chars().any(is_invisible_char),
         Predicate::HasMixedScriptToken => {
