@@ -77,6 +77,8 @@ thread_local! {
     static ENDS_WITH_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for regex keyed by (input_hash, pattern_hash, case_sensitive).
     static REGEX_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for rule trigger results keyed by (input_hash, rule_id_hash).
+    static RULE_TRIGGER_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -169,6 +171,44 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
     let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
     for rule in &program.rules {
         if program.chained_targets.contains(&rule.id) { continue; }
+        // Fast path: if rule has no then-chains, check the rule trigger cache.
+        if rule.then.is_empty() {
+            let mut hasher = FxHasher::default();
+            hasher.write(rule.id.as_bytes());
+            let rule_hash = hasher.finish();
+            let cache_key = (ctx.input_hash, rule_hash);
+            let cached = RULE_TRIGGER_CACHE.with(|cell| cell.borrow().get(&cache_key).copied());
+            if let Some(triggers) = cached {
+                if triggers {
+                    with_metrics(|m| { m.rule_evals += 1; m.triggered_rules += 1; });
+                    triggered.push(TriggeredRuleRef {
+                        id: rule.id.as_str(),
+                        classification: rule.verdict.classify.as_str(),
+                        confidence: rule.verdict.confidence,
+                        explanation: rule.verdict.explanation.as_deref(),
+                    });
+                } else {
+                    with_metrics(|m| m.rule_evals += 1);
+                }
+                continue;
+            }
+            let triggers = eval_predicate(&rule.when, &ctx);
+            RULE_TRIGGER_CACHE.with(|cell| {
+                let mut cache = cell.borrow_mut();
+                cache.insert(cache_key, triggers);
+                if cache.len() > 256 { cache.clear(); }
+            });
+            if triggers {
+                with_metrics(|m| m.triggered_rules += 1);
+                triggered.push(TriggeredRuleRef {
+                    id: rule.id.as_str(),
+                    classification: rule.verdict.classify.as_str(),
+                    confidence: rule.verdict.confidence,
+                    explanation: rule.verdict.explanation.as_deref(),
+                });
+            }
+            continue;
+        }
         eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
     }
 
