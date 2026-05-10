@@ -1370,19 +1370,18 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
 fn word_contains(hay: &str, needle: &str) -> bool {
     if needle.is_empty() { return true; }
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let mut start = 0;
-    while let Some(pos) = hay[start..].find(needle) {
-        let abs_pos = start + pos;
+    let hay_bytes = hay.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    for abs_pos in memchr::memmem::find_iter(hay_bytes, needle_bytes) {
         let left_ok = abs_pos == 0 || {
-            let prev = hay.as_bytes()[abs_pos - 1];
+            let prev = hay_bytes[abs_pos - 1];
             !is_word(prev) && prev < 0x80
         };
         let right_ok = abs_pos + needle.len() == hay.len() || {
-            let next = hay.as_bytes()[abs_pos + needle.len()];
+            let next = hay_bytes[abs_pos + needle.len()];
             !is_word(next) && next < 0x80
         };
         if left_ok && right_ok { return true; }
-        start = abs_pos + needle.len().max(1);
     }
     false
 }
