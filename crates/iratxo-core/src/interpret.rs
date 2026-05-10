@@ -772,6 +772,7 @@ impl<'a> Ctx<'a> {
     }
 }
 
+#[inline]
 fn regex_cache_key(pattern: &str, case_sensitive: bool) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -1159,6 +1160,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
 // ---------- predicate helpers ----------
 
 #[inline]
+#[inline]
 fn contains_ctx(ctx: &Ctx, needle: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         ctx.input.contains(needle)
@@ -1168,10 +1170,12 @@ fn contains_ctx(ctx: &Ctx, needle: &str, case_sensitive: bool) -> bool {
 }
 
 #[inline]
+#[inline]
 fn token_count(s: &str) -> usize {
     s.split_whitespace().count()
 }
 
+#[inline]
 #[inline]
 fn paragraph_count(s: &str) -> usize {
     s.split("\n\n").map(str::trim).filter(|p| !p.is_empty()).count().max(if s.trim().is_empty() { 0 } else { 1 })
@@ -1291,6 +1295,7 @@ fn shannon_entropy(s: &str) -> f32 {
 }
 
 /// Count regex matches, stopping as soon as `limit` is reached.
+#[inline]
 #[inline]
 fn regex_count_early(re: &Regex, input: &str, limit: u32) -> usize {
     if limit == 0 { return 0; }
@@ -1444,6 +1449,7 @@ fn sentence_count(s: &str) -> usize {
         .count()
 }
 
+#[inline]
 #[inline]
 fn hash_strings(list: &[String]) -> u64 {
     let mut hasher = FxHasher::default();
