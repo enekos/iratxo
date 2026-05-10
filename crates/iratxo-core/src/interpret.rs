@@ -44,6 +44,9 @@ struct RuleTriggerBits {
     winner_idx: u8,
     // Number of rules with explanations (for pre-allocating explanations Vec).
     explanation_count: u8,
+    // Number of triggered rules and their indices for fast cache-hit iteration.
+    triggered_count: u8,
+    triggered_indices: [u8; 64],
 }
 
 impl RuleTriggerBits {
@@ -54,12 +57,17 @@ impl RuleTriggerBits {
 
     #[inline]
     fn set_triggered(&mut self, idx: usize) {
-        self.bits |= 1u64 << idx;
+        let bit = 1u64 << idx;
+        if self.bits & bit == 0 {
+            self.triggered_indices[self.triggered_count as usize] = idx as u8;
+            self.triggered_count += 1;
+        }
+        self.bits |= bit;
     }
 
     #[inline]
     fn new() -> Self {
-        RuleTriggerBits { bits: 0, winner_idx: 255, explanation_count: 0 }
+        RuleTriggerBits { bits: 0, winner_idx: 255, explanation_count: 0, triggered_count: 0, triggered_indices: [0; 64] }
     }
 }
 
@@ -144,6 +152,22 @@ impl CachedTriggerResult {
     }
 
     #[inline]
+    fn triggered_count(&self) -> u8 {
+        match self {
+            CachedTriggerResult::Small(bits) => bits.triggered_count,
+            CachedTriggerResult::Large(_) => 0, // fallback: not used for Large
+        }
+    }
+
+    #[inline]
+    fn triggered_index(&self, i: usize) -> u8 {
+        match self {
+            CachedTriggerResult::Small(bits) => bits.triggered_indices[i],
+            CachedTriggerResult::Large(_) => 0,
+        }
+    }
+
+    #[inline]
     fn new(len: usize) -> Self {
         if len <= 64 {
             CachedTriggerResult::Small(RuleTriggerBits::new())
@@ -203,7 +227,7 @@ thread_local! {
     /// Cross-evaluate cache for regex keyed by (input_hash, pattern_hash, case_sensitive).
     static REGEX_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for rule trigger results keyed by (program_ptr, input_hash).
-    /// Uses a u32 bitset for ≤32 rules, Vec<bool> fallback for larger programs.
+    /// Uses a u64 bitset for ≤64 rules, Vec<bool> fallback for larger programs.
     /// Also stores the pre-computed winner_idx to avoid max_by scan on cache hits.
     /// Stored in Rc to avoid cloning the Vec<bool> on every cache hit.
     static RULE_TRIGGER_VEC_CACHE: RefCell<FxHashMap<(u64, u64), Rc<CachedTriggerResult>>> = RefCell::new(FxHashMap::default());
@@ -310,34 +334,56 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
     if let Some(triggers) = cached {
         let mut visited: Option<HashSet<&'a str>> = None;
         let mut triggered_count = 0usize;
-        for (i, rule) in program.rules.iter().enumerate() {
-            if program.chained_target_bits & (1u64 << i) != 0 { continue; }
-            // Rules with then-chains must always be evaluated via eval_rule_ref
-            // because the chained rules need to be added too.
-            if !rule.then.is_empty() {
-                if triggers.is_triggered(i) {
-                    eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
-                } else {
-                    with_metrics(|m| m.rule_evals += 1);
+        // Fast path for Small variant: iterate only over triggered rule indices.
+        match triggers.as_ref() {
+            CachedTriggerResult::Small(bits) => {
+                for i in 0..bits.triggered_count {
+                    let idx = bits.triggered_indices[i as usize] as usize;
+                    let rule = unsafe { program.rules.get_unchecked(idx) };
+                    if !rule.then.is_empty() {
+                        eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
+                    } else {
+                        with_metrics(|m| { m.rule_evals += 1; m.triggered_rules += 1; });
+                        unsafe {
+                            let ptr = triggered.as_mut_ptr().add(triggered_count);
+                            ptr.write(TriggeredRuleRef {
+                                id: rule.id.as_str(),
+                                classification: rule.verdict.classify.as_str(),
+                                confidence: rule.verdict.confidence,
+                                explanation: rule.verdict.explanation.as_deref(),
+                            });
+                        }
+                        triggered_count += 1;
+                    }
                 }
-                continue;
             }
-            if triggers.is_triggered(i) {
-                with_metrics(|m| { m.rule_evals += 1; m.triggered_rules += 1; });
-                // SAFETY: triggered was allocated with capacity program.rules.len(),
-                // and we never write more than program.rules.len() elements.
-                unsafe {
-                    let ptr = triggered.as_mut_ptr().add(triggered_count);
-                    ptr.write(TriggeredRuleRef {
-                        id: rule.id.as_str(),
-                        classification: rule.verdict.classify.as_str(),
-                        confidence: rule.verdict.confidence,
-                        explanation: rule.verdict.explanation.as_deref(),
-                    });
+            CachedTriggerResult::Large(_) => {
+                for (i, rule) in program.rules.iter().enumerate() {
+                    if program.chained_target_bits & (1u64 << i) != 0 { continue; }
+                    if !rule.then.is_empty() {
+                        if triggers.is_triggered(i) {
+                            eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
+                        } else {
+                            with_metrics(|m| m.rule_evals += 1);
+                        }
+                        continue;
+                    }
+                    if triggers.is_triggered(i) {
+                        with_metrics(|m| { m.rule_evals += 1; m.triggered_rules += 1; });
+                        unsafe {
+                            let ptr = triggered.as_mut_ptr().add(triggered_count);
+                            ptr.write(TriggeredRuleRef {
+                                id: rule.id.as_str(),
+                                classification: rule.verdict.classify.as_str(),
+                                confidence: rule.verdict.confidence,
+                                explanation: rule.verdict.explanation.as_deref(),
+                            });
+                        }
+                        triggered_count += 1;
+                    } else {
+                        with_metrics(|m| m.rule_evals += 1);
+                    }
                 }
-                triggered_count += 1;
-            } else {
-                with_metrics(|m| m.rule_evals += 1);
             }
         }
         unsafe { triggered.set_len(triggered_count); }
