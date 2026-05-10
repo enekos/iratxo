@@ -35,6 +35,41 @@ pub struct EvalMetrics {
     pub lower_bytes: u64,
 }
 
+/// Compact bitset for rule trigger results. Uses u32 for ≤32 rules (no heap allocation),
+/// falls back to Vec<bool> for larger programs.
+#[derive(Clone)]
+enum RuleTriggerBits {
+    Small(u32),
+    Large(Vec<bool>),
+}
+
+impl RuleTriggerBits {
+    #[inline]
+    fn is_triggered(&self, idx: usize) -> bool {
+        match self {
+            RuleTriggerBits::Small(bits) => bits & (1u32 << idx) != 0,
+            RuleTriggerBits::Large(vec) => vec[idx],
+        }
+    }
+
+    #[inline]
+    fn set_triggered(&mut self, idx: usize) {
+        match self {
+            RuleTriggerBits::Small(bits) => *bits |= 1u32 << idx,
+            RuleTriggerBits::Large(vec) => vec[idx] = true,
+        }
+    }
+
+    #[inline]
+    fn new(len: usize) -> Self {
+        if len <= 32 {
+            RuleTriggerBits::Small(0)
+        } else {
+            RuleTriggerBits::Large(vec![false; len])
+        }
+    }
+}
+
 thread_local! {
     /// Cache for (input_ptr, input_hash) to avoid re-hashing the same input string.
     static LAST_INPUT_HASH: std::cell::Cell<(u64, u64)> = std::cell::Cell::new((0, 0));
@@ -82,8 +117,9 @@ thread_local! {
     /// Cross-evaluate cache for regex keyed by (input_hash, pattern_hash, case_sensitive).
     static REGEX_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for rule trigger results keyed by (program_ptr, input_hash).
-    /// Stores a Vec<bool> where each element corresponds to whether the rule at that index triggered.
-    static RULE_TRIGGER_VEC_CACHE: RefCell<FxHashMap<(u64, u64), Vec<bool>>> = RefCell::new(FxHashMap::default());
+    /// Uses a u32 bitset where bit i = 1 means rule i triggered.
+    /// Falls back to Vec<bool> via a small wrapper if >32 rules.
+    static RULE_TRIGGER_VEC_CACHE: RefCell<FxHashMap<(u64, u64), RuleTriggerBits>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -178,22 +214,22 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
     // Fast path: check if we have a cached trigger vector for this input.
     let program_ptr = program as *const _ as u64;
     let cache_key = (program_ptr, ctx.input_hash);
-    let cached_vec = RULE_TRIGGER_VEC_CACHE.with(|cell| cell.borrow().get(&cache_key).cloned());
-    if let Some(triggers) = cached_vec {
+    let cached = RULE_TRIGGER_VEC_CACHE.with(|cell| cell.borrow().get(&cache_key).cloned());
+    if let Some(triggers) = cached {
         let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
         for (i, rule) in program.rules.iter().enumerate() {
             if program.chained_targets.contains(&rule.id) { continue; }
             // Rules with then-chains must always be evaluated via eval_rule_ref
             // because the chained rules need to be added too.
             if !rule.then.is_empty() {
-                if triggers[i] {
+                if triggers.is_triggered(i) {
                     eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
                 } else {
                     with_metrics(|m| m.rule_evals += 1);
                 }
                 continue;
             }
-            if triggers[i] {
+            if triggers.is_triggered(i) {
                 with_metrics(|m| { m.rule_evals += 1; m.triggered_rules += 1; });
                 triggered.push(TriggeredRuleRef {
                     id: rule.id.as_str(),
@@ -207,16 +243,15 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
         }
     } else {
         let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
-        let mut trigger_vec = Vec::with_capacity(program.rules.len());
-        for rule in &program.rules {
+        let mut trigger_bits = RuleTriggerBits::new(program.rules.len());
+        for (i, rule) in program.rules.iter().enumerate() {
             if program.chained_targets.contains(&rule.id) {
-                trigger_vec.push(false);
                 continue;
             }
             if rule.then.is_empty() {
                 let triggers = eval_predicate(&rule.when, &ctx);
-                trigger_vec.push(triggers);
                 if triggers {
+                    trigger_bits.set_triggered(i);
                     with_metrics(|m| m.triggered_rules += 1);
                     triggered.push(TriggeredRuleRef {
                         id: rule.id.as_str(),
@@ -229,12 +264,14 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
             } else {
                 let before = triggered.len();
                 eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
-                trigger_vec.push(triggered.len() > before);
+                if triggered.len() > before {
+                    trigger_bits.set_triggered(i);
+                }
             }
         }
         RULE_TRIGGER_VEC_CACHE.with(|cell| {
             let mut cache = cell.borrow_mut();
-            cache.insert(cache_key, trigger_vec);
+            cache.insert(cache_key, trigger_bits);
             if cache.len() > 256 { cache.clear(); }
         });
     }
