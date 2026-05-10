@@ -4,7 +4,8 @@ use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use rustc_hash::FxHashMap;
+use std::hash::{Hash as _, Hasher};
+use rustc_hash::{FxHashMap, FxHasher};
 
 /// Detailed metrics for a single `evaluate` call.
 #[derive(Debug, Default, Clone, Serialize)]
@@ -36,6 +37,9 @@ pub struct EvalMetrics {
 thread_local! {
     static METRICS: RefCell<Option<EvalMetrics>> = RefCell::new(None);
     static METRICS_ENABLED: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    /// Cross-evaluate cache for entity counts keyed by (input_hash, kind, min_count).
+    /// Capped at 256 entries to avoid unbounded growth.
+    static ENTITY_COUNT_CACHE: RefCell<FxHashMap<(u64, EntityKind, u32), usize>> = RefCell::new(FxHashMap::default());
 }
 
 #[inline]
@@ -214,7 +218,7 @@ fn eval_rule_ref<'a>(
 struct Ctx<'a> {
     input: &'a str,
     lower: String,
-    entity_counts: RefCell<HashMap<(EntityKind, u32), usize>>,
+    input_hash: u64,
     url_hosts: RefCell<Option<Vec<String>>>,
     lang: RefCell<Option<crate::text::Language>>,
     semantic_embed: RefCell<HashMap<(crate::text::Language, u64), [f32; 256]>>,
@@ -231,10 +235,13 @@ impl<'a> Ctx<'a> {
             m.lower_allocations += 1;
             m.lower_bytes += lower.len() as u64;
         });
+        let mut hasher = FxHasher::default();
+        input.hash(&mut hasher);
+        let input_hash = hasher.finish();
         Ctx {
             input,
             lower,
-            entity_counts: RefCell::new(HashMap::new()),
+            input_hash,
             url_hosts: RefCell::new(None),
             lang: RefCell::new(None),
             semantic_embed: RefCell::new(HashMap::new()),
@@ -266,10 +273,20 @@ impl<'a> Ctx<'a> {
     }
 
     fn count_entities(&self, kind: EntityKind, min_count: u32) -> bool {
-        let mut cache = self.entity_counts.borrow_mut();
-        let count = *cache.entry((kind, min_count)).or_insert_with(|| {
-            with_metrics(|m| m.entity_detection_calls += 1);
-            count_entities_impl(self.input, kind, min_count)
+        let key = (self.input_hash, kind, min_count);
+        let cached = ENTITY_COUNT_CACHE.with(|cell| cell.borrow().get(&key).copied());
+        if let Some(count) = cached {
+            return count >= min_count as usize;
+        }
+        with_metrics(|m| m.entity_detection_calls += 1);
+        let count = count_entities_impl(self.input, kind, min_count);
+        ENTITY_COUNT_CACHE.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            cache.insert(key, count);
+            // Simple cap: if exceeded, clear to avoid unbounded growth.
+            if cache.len() > 256 {
+                cache.clear();
+            }
         });
         count >= min_count as usize
     }
