@@ -931,28 +931,20 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
 #[inline]
 fn word_contains(hay: &str, needle: &str) -> bool {
     if needle.is_empty() { return true; }
-    let nbytes = needle.as_bytes();
-    let hbytes = hay.as_bytes();
-    if nbytes.len() > hbytes.len() { return false; }
-    let last = hbytes.len() - nbytes.len();
     let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    'outer: for i in 0..=last {
-        if !hay.is_char_boundary(i) || !hay.is_char_boundary(i + nbytes.len()) { continue; }
-        if &hbytes[i..i + nbytes.len()] != nbytes { continue; }
-        // Boundary check on the byte before and after.
-        if i > 0 {
-            let prev = hbytes[i - 1];
-            if is_word(prev) { continue 'outer; }
-            // Multi-byte char before? char_boundary at i guarantees this prev is a complete byte; if it's part of a non-ASCII char, treat as word-char.
-            if prev >= 0x80 { continue 'outer; }
-        }
-        let after_idx = i + nbytes.len();
-        if after_idx < hbytes.len() {
-            let next = hbytes[after_idx];
-            if is_word(next) { continue 'outer; }
-            if next >= 0x80 { continue 'outer; }
-        }
-        return true;
+    let mut start = 0;
+    while let Some(pos) = hay[start..].find(needle) {
+        let abs_pos = start + pos;
+        let left_ok = abs_pos == 0 || {
+            let prev = hay.as_bytes()[abs_pos - 1];
+            !is_word(prev) && prev < 0x80
+        };
+        let right_ok = abs_pos + needle.len() == hay.len() || {
+            let next = hay.as_bytes()[abs_pos + needle.len()];
+            !is_word(next) && next < 0x80
+        };
+        if left_ok && right_ok { return true; }
+        start = abs_pos + needle.len().max(1);
     }
     false
 }
