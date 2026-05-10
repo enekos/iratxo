@@ -141,7 +141,7 @@ fn eval_rule<'a>(
 struct Ctx<'a> {
     input: &'a str,
     lower: String,
-    entity_counts: RefCell<HashMap<EntityKind, usize>>,
+    entity_counts: RefCell<HashMap<(EntityKind, u32), usize>>,
     url_hosts: RefCell<Option<Vec<String>>>,
     lang: RefCell<Option<crate::text::Language>>,
     semantic_embed: RefCell<HashMap<(crate::text::Language, u64), [f32; 256]>>,
@@ -194,7 +194,7 @@ impl<'a> Ctx<'a> {
 
     fn count_entities(&self, kind: EntityKind, min_count: u32) -> bool {
         let mut cache = self.entity_counts.borrow_mut();
-        let count = *cache.entry(kind).or_insert_with(|| {
+        let count = *cache.entry((kind, min_count)).or_insert_with(|| {
             with_metrics(|m| m.entity_detection_calls += 1);
             count_entities_impl(self.input, kind, min_count)
         });
