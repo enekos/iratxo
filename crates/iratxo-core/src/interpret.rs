@@ -165,8 +165,8 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
 /// returned value (true in the typical compile-once-evaluate-many pattern).
 pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> {
     let ctx = Ctx::new(input);
-    let mut triggered: Vec<TriggeredRuleRef<'a>> = Vec::new();
-    let mut visited: HashSet<&'a str> = HashSet::new();
+    let mut triggered: Vec<TriggeredRuleRef<'a>> = Vec::with_capacity(program.rules.len());
+    let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
     for rule in &program.rules {
         if program.chained_targets.contains(&rule.id) { continue; }
         eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
@@ -178,7 +178,12 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
 
     let classification = winner.map(|t| t.classification).unwrap_or(&program.default.classify);
     let confidence = winner.map(|t| t.confidence).unwrap_or(program.default.confidence);
-    let explanations: Vec<&'a str> = triggered.iter().filter_map(|t| t.explanation).collect();
+    let mut explanations: Vec<&'a str> = Vec::with_capacity(triggered.len() / 4);
+    for t in &triggered {
+        if let Some(e) = t.explanation {
+            explanations.push(e);
+        }
+    }
 
     EvalResultRef {
         classification,
