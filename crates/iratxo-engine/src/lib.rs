@@ -14,6 +14,9 @@
 #![no_main]
 
 use std::alloc::{alloc, dealloc, Layout};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 #[no_mangle]
 pub extern "C" fn iratxo_alloc(len: u32) -> *mut u8 {
@@ -51,6 +54,17 @@ pub extern "C" fn iratxo_compile(yaml_ptr: *const u8, yaml_len: u32) -> u64 {
     ((ptr as u64) << 32) | (len as u64)
 }
 
+thread_local! {
+    static PROGRAM_CACHE: RefCell<HashMap<u64, Rc<iratxo_core::Program>>> = RefCell::new(HashMap::new());
+}
+
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[no_mangle]
 pub extern "C" fn iratxo_execute(
     rule_ptr: *const u8,
@@ -62,14 +76,29 @@ pub extern "C" fn iratxo_execute(
     let input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len as usize) };
     let input = std::str::from_utf8(input_bytes).unwrap_or("");
 
-    let json = match iratxo_core::decode(rule_bytes) {
-        Ok(program) => {
+    let rule_hash = hash_bytes(rule_bytes);
+    let program_rc = PROGRAM_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some(p) = cache.get(&rule_hash) {
+            return Some(Rc::clone(p));
+        }
+        match iratxo_core::decode(rule_bytes) {
+            Ok(program) => {
+                let rc = Rc::new(program);
+                cache.insert(rule_hash, Rc::clone(&rc));
+                Some(rc)
+            }
+            Err(_) => None,
+        }
+    });
+
+    let json = match program_rc {
+        Some(program) => {
             let result = iratxo_core::evaluate(&program, input);
             serde_json::to_vec(&result).unwrap_or_else(|_| b"{\"error\":\"serialize\"}".to_vec())
         }
-        Err(e) => {
-            let msg = format!("{{\"error\":\"decode: {}\"}}", e);
-            msg.into_bytes()
+        None => {
+            b"{\"error\":\"decode\"}".to_vec()
         }
     };
 

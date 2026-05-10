@@ -375,11 +375,13 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
     if let Some(n) = p.min_length { variants.push(Predicate::MinLength { tokens: n }); }
     if let Some(n) = p.max_length { variants.push(Predicate::MaxLength { tokens: n }); }
     if let Some(items) = p.all {
-        let lowered = items.into_iter().map(lower_predicate).collect::<Result<Vec<_>, _>>()?;
+        let mut lowered = items.into_iter().map(lower_predicate).collect::<Result<Vec<_>, _>>()?;
+        lowered.sort_by_key(|p| p.cost_estimate());
         variants.push(Predicate::All(lowered));
     }
     if let Some(items) = p.any {
-        let lowered = items.into_iter().map(lower_predicate).collect::<Result<Vec<_>, _>>()?;
+        let mut lowered = items.into_iter().map(lower_predicate).collect::<Result<Vec<_>, _>>()?;
+        lowered.sort_by_key(|p| p.cost_estimate());
         variants.push(Predicate::Any(lowered));
     }
     if let Some(inner) = p.not {

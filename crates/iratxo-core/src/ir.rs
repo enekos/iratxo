@@ -122,6 +122,50 @@ pub enum Predicate {
     Always,
 }
 
+impl Predicate {
+    /// Rough cost estimate (lower = cheaper) used at compile time to sort
+    /// predicates inside `All`/`Any` so expensive work is skipped early via
+    /// short-circuiting.
+    pub fn cost_estimate(&self) -> u8 {
+        match self {
+            Predicate::Always => 0,
+            Predicate::ContainsAny { .. }
+            | Predicate::ContainsAll { .. }
+            | Predicate::NotContainsAny { .. }
+            | Predicate::StartsWithAny { .. }
+            | Predicate::EndsWithAny { .. }
+            | Predicate::MinLength { .. }
+            | Predicate::MaxLength { .. } => 1,
+            Predicate::WordContainsAny { .. }
+            | Predicate::CharCount { .. }
+            | Predicate::LineCount { .. }
+            | Predicate::SentenceCount { .. }
+            | Predicate::ParagraphCount { .. }
+            | Predicate::MaxWordsPerSentence { .. }
+            | Predicate::MostlyUppercase { .. }
+            | Predicate::DigitRatioAbove { .. }
+            | Predicate::PunctuationRatioAbove { .. }
+            | Predicate::HasInvisibleChars
+            | Predicate::ScriptIs { .. }
+            | Predicate::RepeatedCharRun { .. } => 2,
+            Predicate::Regex { .. }
+            | Predicate::LanguageIs { .. }
+            | Predicate::TokenEntropyAbove { .. }
+            | Predicate::RepeatedToken { .. }
+            | Predicate::TypeTokenRatioBelow { .. }
+            | Predicate::HasMixedScriptToken => 3,
+            Predicate::HasSection { .. }
+            | Predicate::HasUrlToDomain { .. } => 4,
+            Predicate::HasEntity { .. }
+            | Predicate::SemanticMatch { .. } => 5,
+            Predicate::All(inner) | Predicate::Any(inner) => {
+                inner.iter().map(|p| p.cost_estimate()).max().unwrap_or(0)
+            }
+            Predicate::Not(inner) => inner.cost_estimate(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EntityKind {
     Email,

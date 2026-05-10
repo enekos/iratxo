@@ -12,7 +12,7 @@ iratxo-core = { path = "../iratxo-core" }
 serde_json = "1"
 
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = true
 strip = true
 codegen-units = 1
