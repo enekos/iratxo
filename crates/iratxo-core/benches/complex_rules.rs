@@ -386,7 +386,7 @@ fn bench_workload(name: &str, program: &iratxo_core::Program, input: &str, itera
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = iratxo_core::evaluate_ref(program, input);
+        std::hint::black_box(iratxo_core::evaluate_ref(program, input));
     }
     let elapsed = start.elapsed();
     let total_us = elapsed.as_micros() as f64;
@@ -426,7 +426,7 @@ fn bench_single_shot(name: &str, program: &iratxo_core::Program, base_input: &st
 
     let start = Instant::now();
     for input in &inputs {
-        let _ = iratxo_core::evaluate_ref(program, input);
+        std::hint::black_box(iratxo_core::evaluate_ref(program, input));
     }
     let elapsed = start.elapsed();
     let total_us = elapsed.as_micros() as f64;
