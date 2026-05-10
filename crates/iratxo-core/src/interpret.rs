@@ -55,6 +55,14 @@ thread_local! {
     static CHAR_STATS_CACHE: RefCell<FxHashMap<u64, CharStats>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for input shape counts keyed by input_hash.
     static COUNTS_CACHE: RefCell<FxHashMap<u64, Counts>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for repeated char run keyed by (input_hash, min_run).
+    static REPEATED_CHAR_RUN_CACHE: RefCell<FxHashMap<(u64, u32), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for has_mixed_script_token keyed by input_hash.
+    static MIXED_SCRIPT_CACHE: RefCell<FxHashMap<u64, bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for script_is keyed by (input_hash, scripts_hash).
+    static SCRIPT_IS_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for token_entropy_above keyed by (input_hash, min_bits_bits, min_token_len).
+    static TOKEN_ENTROPY_CACHE: RefCell<FxHashMap<(u64, u32, u32), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -529,11 +537,20 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             if stats.letters == 0 { false } else { (stats.upper as f32) / (stats.letters as f32) >= *min_ratio }
         }
         Predicate::TokenEntropyAbove { min_bits, min_token_len } => {
-            input.split_whitespace().any(|tok| {
+            let key = (ctx.input_hash, min_bits.to_bits(), *min_token_len);
+            let cached = TOKEN_ENTROPY_CACHE.with(|cell| cell.borrow().get(&key).copied());
+            if let Some(r) = cached { return r; }
+            let result = input.split_whitespace().any(|tok| {
                 let len = tok.chars().count();
                 if (len as u32) < *min_token_len { return false; }
                 shannon_entropy(tok) >= *min_bits
-            })
+            });
+            TOKEN_ENTROPY_CACHE.with(|cell| {
+                let mut cache = cell.borrow_mut();
+                cache.insert(key, result);
+                if cache.len() > 256 { cache.clear(); }
+            });
+            result
         }
 
         Predicate::SemanticMatch(data) => {
@@ -623,23 +640,34 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             if stats.non_whitespace == 0 { false } else { (stats.punct as f32) / (stats.non_whitespace as f32) >= *min_ratio }
         }
         Predicate::RepeatedCharRun { min_run } => {
+            let key = (ctx.input_hash, *min_run);
+            let cached = REPEATED_CHAR_RUN_CACHE.with(|cell| cell.borrow().get(&key).copied());
+            if let Some(r) = cached { return r; }
             let mut prev: Option<char> = None;
             let mut run: u32 = 0;
-            for c in input.chars() {
-                if c.is_whitespace() {
-                    prev = None;
-                    run = 0;
-                    continue;
+            let result = 'scan: {
+                for c in input.chars() {
+                    if c.is_whitespace() {
+                        prev = None;
+                        run = 0;
+                        continue;
+                    }
+                    if Some(c) == prev {
+                        run += 1;
+                        if run >= *min_run { break 'scan true; }
+                    } else {
+                        prev = Some(c);
+                        run = 1;
+                    }
                 }
-                if Some(c) == prev {
-                    run += 1;
-                    if run >= *min_run { return true; }
-                } else {
-                    prev = Some(c);
-                    run = 1;
-                }
-            }
-            false
+                false
+            };
+            REPEATED_CHAR_RUN_CACHE.with(|cell| {
+                let mut cache = cell.borrow_mut();
+                cache.insert(key, result);
+                if cache.len() > 256 { cache.clear(); }
+            });
+            result
         }
         Predicate::RepeatedToken { min_count } => {
             let mut counts: FxHashMap<&str, u32> = FxHashMap::default();
@@ -671,12 +699,34 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         }
         Predicate::HasInvisibleChars => char_stats(ctx.input, ctx.input_hash).has_invisible,
         Predicate::HasMixedScriptToken => {
-            input.split_whitespace().any(|tok| token_uses_multiple_scripts(tok))
+            let cached = MIXED_SCRIPT_CACHE.with(|cell| cell.borrow().get(&ctx.input_hash).copied());
+            if let Some(r) = cached { return r; }
+            let result = input.split_whitespace().any(|tok| token_uses_multiple_scripts(tok));
+            MIXED_SCRIPT_CACHE.with(|cell| {
+                let mut cache = cell.borrow_mut();
+                cache.insert(ctx.input_hash, result);
+                if cache.len() > 256 { cache.clear(); }
+            });
+            result
         }
         Predicate::ScriptIs { scripts } => {
-            scripts.iter().any(|s| {
+            let mut hasher = FxHasher::default();
+            for s in scripts {
+                hasher.write(s.as_bytes());
+            }
+            let scripts_hash = hasher.finish();
+            let key = (ctx.input_hash, scripts_hash);
+            let cached = SCRIPT_IS_CACHE.with(|cell| cell.borrow().get(&key).copied());
+            if let Some(r) = cached { return r; }
+            let result = scripts.iter().any(|s| {
                 input.chars().any(|c| char_in_script(c, s))
-            })
+            });
+            SCRIPT_IS_CACHE.with(|cell| {
+                let mut cache = cell.borrow_mut();
+                cache.insert(key, result);
+                if cache.len() > 256 { cache.clear(); }
+            });
+            result
         }
     };
     with_metrics(|m| {
