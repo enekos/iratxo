@@ -77,8 +77,9 @@ thread_local! {
     static ENDS_WITH_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for regex keyed by (input_hash, pattern_hash, case_sensitive).
     static REGEX_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
-    /// Cross-evaluate cache for rule trigger results keyed by (input_hash, rule_id_hash).
-    static RULE_TRIGGER_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for rule trigger results keyed by (program_ptr, input_hash).
+    /// Stores a Vec<bool> where each element corresponds to whether the rule at that index triggered.
+    static RULE_TRIGGER_VEC_CACHE: RefCell<FxHashMap<(u64, u64), Vec<bool>>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -168,48 +169,69 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
 pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> {
     let ctx = Ctx::new(input);
     let mut triggered: Vec<TriggeredRuleRef<'a>> = Vec::with_capacity(program.rules.len());
-    let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
-    for rule in &program.rules {
-        if program.chained_targets.contains(&rule.id) { continue; }
-        // Fast path: if rule has no then-chains, check the rule trigger cache.
-        if rule.then.is_empty() {
-            let mut hasher = FxHasher::default();
-            hasher.write(rule.id.as_bytes());
-            let rule_hash = hasher.finish();
-            let cache_key = (ctx.input_hash, rule_hash);
-            let cached = RULE_TRIGGER_CACHE.with(|cell| cell.borrow().get(&cache_key).copied());
-            if let Some(triggers) = cached {
-                if triggers {
-                    with_metrics(|m| { m.rule_evals += 1; m.triggered_rules += 1; });
-                    triggered.push(TriggeredRuleRef {
-                        id: rule.id.as_str(),
-                        classification: rule.verdict.classify.as_str(),
-                        confidence: rule.verdict.confidence,
-                        explanation: rule.verdict.explanation.as_deref(),
-                    });
+
+    // Fast path: check if we have a cached trigger vector for this input.
+    let program_ptr = program as *const _ as u64;
+    let cache_key = (program_ptr, ctx.input_hash);
+    let cached_vec = RULE_TRIGGER_VEC_CACHE.with(|cell| cell.borrow().get(&cache_key).cloned());
+    if let Some(triggers) = cached_vec {
+        let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
+        for (i, rule) in program.rules.iter().enumerate() {
+            if program.chained_targets.contains(&rule.id) { continue; }
+            // Rules with then-chains must always be evaluated via eval_rule_ref
+            // because the chained rules need to be added too.
+            if !rule.then.is_empty() {
+                if triggers[i] {
+                    eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
                 } else {
                     with_metrics(|m| m.rule_evals += 1);
                 }
                 continue;
             }
-            let triggers = eval_predicate(&rule.when, &ctx);
-            RULE_TRIGGER_CACHE.with(|cell| {
-                let mut cache = cell.borrow_mut();
-                cache.insert(cache_key, triggers);
-                if cache.len() > 256 { cache.clear(); }
-            });
-            if triggers {
-                with_metrics(|m| m.triggered_rules += 1);
+            if triggers[i] {
+                with_metrics(|m| { m.rule_evals += 1; m.triggered_rules += 1; });
                 triggered.push(TriggeredRuleRef {
                     id: rule.id.as_str(),
                     classification: rule.verdict.classify.as_str(),
                     confidence: rule.verdict.confidence,
                     explanation: rule.verdict.explanation.as_deref(),
                 });
+            } else {
+                with_metrics(|m| m.rule_evals += 1);
             }
-            continue;
         }
-        eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
+    } else {
+        let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
+        let mut trigger_vec = Vec::with_capacity(program.rules.len());
+        for rule in &program.rules {
+            if program.chained_targets.contains(&rule.id) {
+                trigger_vec.push(false);
+                continue;
+            }
+            if rule.then.is_empty() {
+                let triggers = eval_predicate(&rule.when, &ctx);
+                trigger_vec.push(triggers);
+                if triggers {
+                    with_metrics(|m| m.triggered_rules += 1);
+                    triggered.push(TriggeredRuleRef {
+                        id: rule.id.as_str(),
+                        classification: rule.verdict.classify.as_str(),
+                        confidence: rule.verdict.confidence,
+                        explanation: rule.verdict.explanation.as_deref(),
+                    });
+                }
+                with_metrics(|m| m.rule_evals += 1);
+            } else {
+                let before = triggered.len();
+                eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
+                trigger_vec.push(triggered.len() > before);
+            }
+        }
+        RULE_TRIGGER_VEC_CACHE.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            cache.insert(cache_key, trigger_vec);
+            if cache.len() > 256 { cache.clear(); }
+        });
     }
 
     let winner = triggered
