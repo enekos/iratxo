@@ -43,6 +43,12 @@ thread_local! {
     /// Cross-evaluate cache for semantic example embeddings keyed by
     /// (text_hash, language, extra_hash).
     static SEMANTIC_EXAMPLE_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for url_hosts keyed by input_hash.
+    static URL_HOSTS_CACHE: RefCell<FxHashMap<u64, Vec<String>>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for language detection keyed by input_hash.
+    static LANGUAGE_CACHE: RefCell<FxHashMap<u64, crate::text::Language>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for has_section keyed by (input_hash, titles_hash).
+    static SECTION_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
 }
 
 #[inline]
@@ -260,11 +266,18 @@ impl<'a> Ctx<'a> {
     }
 
     fn detect_language(&self) -> crate::text::Language {
-        let mut cache = self.lang.borrow_mut();
-        *cache.get_or_insert_with(|| {
-            with_metrics(|m| m.language_detect_calls += 1);
-            crate::text::detect_language(self.input)
-        })
+        let cached = LANGUAGE_CACHE.with(|cell| cell.borrow().get(&self.input_hash).copied());
+        if let Some(lang) = cached {
+            return lang;
+        }
+        with_metrics(|m| m.language_detect_calls += 1);
+        let lang = crate::text::detect_language(self.input);
+        LANGUAGE_CACHE.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            cache.insert(self.input_hash, lang);
+            if cache.len() > 256 { cache.clear(); }
+        });
+        lang
     }
 
     fn semantic_embed(&self, lang: crate::text::Language, extra: Option<&semantic::SynonymIndex>, extra_hash: u64) -> [f32; 256] {
@@ -295,11 +308,38 @@ impl<'a> Ctx<'a> {
     }
 
     fn url_hosts(&self) -> Vec<String> {
-        let mut cache = self.url_hosts.borrow_mut();
-        cache.get_or_insert_with(|| {
-            with_metrics(|m| m.url_extract_calls += 1);
-            url_hosts_impl(self.input)
-        }).clone()
+        let cached = URL_HOSTS_CACHE.with(|cell| cell.borrow().get(&self.input_hash).cloned());
+        if let Some(hosts) = cached {
+            return hosts;
+        }
+        with_metrics(|m| m.url_extract_calls += 1);
+        let hosts = url_hosts_impl(self.input);
+        URL_HOSTS_CACHE.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            cache.insert(self.input_hash, hosts.clone());
+            if cache.len() > 256 { cache.clear(); }
+        });
+        hosts
+    }
+
+    fn has_section(&self, titles: &[String]) -> bool {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = FxHasher::default();
+        titles.hash(&mut hasher);
+        let titles_hash = hasher.finish();
+        let key = (self.input_hash, titles_hash);
+        let cached = SECTION_CACHE.with(|cell| cell.borrow().get(&key).copied());
+        if let Some(result) = cached {
+            return result;
+        }
+        with_metrics(|m| m.section_scan_calls += 1);
+        let result = has_section_impl(self.input, titles);
+        SECTION_CACHE.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            cache.insert(key, result);
+            if cache.len() > 256 { cache.clear(); }
+        });
+        result
     }
 }
 
@@ -404,8 +444,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         Predicate::Always => true,
 
         Predicate::HasSection { titles } => {
-            with_metrics(|m| m.section_scan_calls += 1);
-            has_section(ctx, titles)
+            ctx.has_section(titles)
         }
         Predicate::HasEntity { kind, min_count } => {
             ctx.count_entities(*kind, *min_count)
@@ -643,8 +682,8 @@ fn max_words_per_sentence(s: &str) -> usize {
 /// Title comparison is case-insensitive and trims whitespace.
 /// Titles are expected to be pre-trimmed and pre-lowercased at compile time.
 #[inline]
-fn has_section(ctx: &Ctx, titles: &[String]) -> bool {
-    for line in ctx.input.lines() {
+fn has_section_impl(input: &str, titles: &[String]) -> bool {
+    for line in input.lines() {
         let trimmed = line.trim_start();
         if trimmed.starts_with('#') {
             // Strip leading '#' chars and a single space.
@@ -653,10 +692,9 @@ fn has_section(ctx: &Ctx, titles: &[String]) -> bool {
         }
     }
     // Cheap HTML heading match: `<h1>Title</h1>` etc.
-    // Use ctx.lower() instead of re-lowercasing the whole input.
     const HTML_OPEN: [&str; 6] = ["<h1", "<h2", "<h3", "<h4", "<h5", "<h6"];
     const HTML_CLOSE: [&str; 6] = ["</h1>", "</h2>", "</h3>", "</h4>", "</h5>", "</h6>"];
-    let lower = ctx.lower();
+    let lower = input.to_lowercase();
     for level in 1..=6 {
         let open = HTML_OPEN[level - 1];
         let close = HTML_CLOSE[level - 1];
