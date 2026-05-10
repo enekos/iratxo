@@ -40,6 +40,9 @@ thread_local! {
     /// Cross-evaluate cache for entity counts keyed by (input_hash, kind, min_count).
     /// Capped at 256 entries to avoid unbounded growth.
     static ENTITY_COUNT_CACHE: RefCell<FxHashMap<(u64, EntityKind, u32), usize>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for semantic example embeddings keyed by
+    /// (text_hash, language, extra_hash).
+    static SEMANTIC_EXAMPLE_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
 }
 
 #[inline]
@@ -475,7 +478,25 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             with_metrics(|m| m.semantic_similarity_calls += data.examples.len() as u64);
             let input_embed = ctx.semantic_embed(lang, extra_idx, hash);
             data.examples.iter().any(|ex| {
-                let ex_embed = semantic::embed_input(ex, lang, extra_idx);
+                let mut hasher = FxHasher::default();
+                ex.as_bytes().hash(&mut hasher);
+                let ex_hash = hasher.finish();
+                let key = (ex_hash, lang, hash);
+                let cached = SEMANTIC_EXAMPLE_CACHE.with(|cell| cell.borrow().get(&key).copied());
+                let ex_embed = match cached {
+                    Some(e) => e,
+                    None => {
+                        let e = semantic::embed_input(ex, lang, extra_idx);
+                        SEMANTIC_EXAMPLE_CACHE.with(|cell| {
+                            let mut cache = cell.borrow_mut();
+                            cache.insert(key, e);
+                            if cache.len() > 256 {
+                                cache.clear();
+                            }
+                        });
+                        e
+                    }
+                };
                 semantic::cosine(&input_embed, &ex_embed) >= data.threshold
             })
         }
