@@ -191,11 +191,9 @@ impl CachedTriggerResult {
 }
 
 thread_local! {
-    /// Combined cache for (input_ptr, lowercased_input, token_offsets) to avoid
+    /// Combined cache for (input_ptr, input_hash, lowercased_input, token_offsets) to avoid
     /// both hashing and lower-cache lookup for repeated inputs.
-    static CTX_DATA_CACHE: RefCell<Option<(u64, Rc<str>, Rc<[(usize, usize)]>)>> = RefCell::new(None);
-    /// Cache for (input_ptr, input_hash) to avoid re-hashing the same input string.
-    static LAST_INPUT_HASH: std::cell::Cell<(u64, u64)> = std::cell::Cell::new((0, 0));
+    static CTX_DATA_CACHE: RefCell<Option<(u64, u64, Rc<str>, Rc<[(usize, usize)]>)>> = RefCell::new(None);
     static METRICS: RefCell<Option<EvalMetrics>> = RefCell::new(None);
     static METRICS_ENABLED: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// Cross-evaluate cache for entity counts keyed by (input_hash, kind, min_count).
@@ -610,42 +608,23 @@ impl<'a> Ctx<'a> {
         let ptr = input.as_ptr() as u64;
 
         // Fast path: if this is the exact same input pointer as last time,
-        // reuse the cached lowercased input and token offsets directly.
+        // reuse the cached lowercased input, token offsets, and hash directly.
         let cached = CTX_DATA_CACHE.with(|cell| {
             let c = cell.borrow();
-            c.as_ref().and_then(|(last_ptr, lower, offsets)| {
+            c.as_ref().and_then(|(last_ptr, last_hash, lower, offsets)| {
                 if *last_ptr == ptr {
-                    Some((Rc::clone(lower), Rc::clone(offsets)))
+                    Some((*last_hash, Rc::clone(lower), Rc::clone(offsets)))
                 } else {
                     None
                 }
             })
         });
         let (lower, token_offsets, input_hash) = match cached {
-            Some((l, o)) => {
-                // Reconstruct hash from the cached data to keep input_hash consistent.
-                // We still need input_hash for other caches. Since hashing is expensive,
-                // we store it alongside in a separate cache.
-                let hash = LAST_INPUT_HASH.with(|cell| {
-                    let (last_ptr, last_hash) = cell.get();
-                    if last_ptr == ptr { last_hash } else { 0 }
-                });
-                let input_hash = if hash != 0 {
-                    hash
-                } else {
-                    let mut hasher = FxHasher::default();
-                    input.hash(&mut hasher);
-                    let h = hasher.finish();
-                    LAST_INPUT_HASH.with(|cell| cell.set((ptr, h)));
-                    h
-                };
-                (l, o, input_hash)
-            }
+            Some((h, l, o)) => (l, o, h),
             None => {
                 let mut hasher = FxHasher::default();
                 input.hash(&mut hasher);
                 let input_hash = hasher.finish();
-                LAST_INPUT_HASH.with(|cell| cell.set((ptr, input_hash)));
 
                 let s = if input.is_ascii() {
                     input.to_ascii_lowercase()
@@ -665,7 +644,7 @@ impl<'a> Ctx<'a> {
                     if cache.len() > 256 { cache.clear(); }
                 });
                 CTX_DATA_CACHE.with(|cell| {
-                    *cell.borrow_mut() = Some((ptr, Rc::clone(&lower_rc), Rc::clone(&offsets_rc)));
+                    *cell.borrow_mut() = Some((ptr, input_hash, Rc::clone(&lower_rc), Rc::clone(&offsets_rc)));
                 });
                 (lower_rc, offsets_rc, input_hash)
             }
