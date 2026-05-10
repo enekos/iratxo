@@ -1,4 +1,4 @@
-use crate::ir::{EntityKind, Predicate, Program, Rule, Verdict};
+use crate::ir::{EntityKind, Predicate, Program, Rule};
 use crate::semantic;
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
@@ -169,14 +169,6 @@ impl CachedTriggerResult {
         match self {
             CachedTriggerResult::Small(bits) => bits.triggered_count,
             CachedTriggerResult::Large(vec) => vec.triggered_count,
-        }
-    }
-
-    #[inline]
-    fn triggered_index(&self, i: usize) -> u8 {
-        match self {
-            CachedTriggerResult::Small(bits) => bits.triggered_indices[i],
-            CachedTriggerResult::Large(_) => 0,
         }
     }
 
@@ -504,38 +496,6 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
         confidence,
         triggered,
         explanations,
-    }
-}
-
-#[inline]
-fn eval_rule<'a>(
-    rule: &'a Rule,
-    rules: &'a [Rule],
-    ctx: &Ctx,
-    out: &mut Vec<TriggeredRule>,
-    visited: &mut HashSet<&'a str>,
-    depth: u64,
-) {
-    with_metrics(|m| {
-        m.rule_evals += 1;
-        if depth > m.max_chain_depth {
-            m.max_chain_depth = depth;
-        }
-    });
-    if !visited.insert(rule.id.as_str()) { return; }
-    if !eval_predicate(&rule.when, ctx) { return; }
-    with_metrics(|m| m.triggered_rules += 1);
-    out.push(TriggeredRule {
-        id: rule.id.clone(),
-        classification: rule.verdict.classify.clone(),
-        confidence: rule.verdict.confidence,
-        explanation: rule.verdict.explanation.clone(),
-    });
-    for chained_id in &rule.then {
-        if let Some(next) = rules.iter().find(|r| r.id == *chained_id) {
-            with_metrics(|m| m.chain_traversals += 1);
-            eval_rule(next, rules, ctx, out, visited, depth + 1);
-        }
     }
 }
 
@@ -935,8 +895,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
                 .and_then(crate::text::Language::from_code)
                 .unwrap_or_else(|| ctx.detect_language());
 
-            let mut fallback_idx: Option<semantic::SynonymIndex> = None;
-            let (extra_idx, hash) = if data.extra_synonyms.is_empty() {
+            let (extra_idx_owned, hash) = if data.extra_synonyms.is_empty() {
                 (None, 0u64)
             } else {
                 let mut json = String::from("{");
@@ -948,9 +907,10 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
                 }
                 json.push('}');
                 let h = semantic::fnv1a64(json.as_bytes());
-                fallback_idx = Some(semantic::SynonymIndex::from_json_for(&json, lang));
-                (fallback_idx.as_ref(), h)
+                let idx = semantic::SynonymIndex::from_json_for(&json, lang);
+                (Some(idx), h)
             };
+            let extra_idx = extra_idx_owned.as_ref();
 
             with_metrics(|m| m.semantic_similarity_calls += data.examples.len() as u64);
             let input_embed = ctx.semantic_embed(lang, extra_idx, hash);
@@ -1139,7 +1099,6 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
 // ---------- predicate helpers ----------
 
 #[inline]
-#[inline]
 fn contains_ctx(ctx: &Ctx, needle: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         ctx.input.contains(needle)
@@ -1149,12 +1108,10 @@ fn contains_ctx(ctx: &Ctx, needle: &str, case_sensitive: bool) -> bool {
 }
 
 #[inline]
-#[inline]
 fn token_count(s: &str) -> usize {
     s.split_whitespace().count()
 }
 
-#[inline]
 #[inline]
 fn paragraph_count(s: &str) -> usize {
     s.split("\n\n").map(str::trim).filter(|p| !p.is_empty()).count().max(if s.trim().is_empty() { 0 } else { 1 })
@@ -1274,7 +1231,6 @@ fn shannon_entropy(s: &str) -> f32 {
 }
 
 /// Count regex matches, stopping as soon as `limit` is reached.
-#[inline]
 #[inline]
 fn regex_count_early(re: &Regex, input: &str, limit: u32) -> usize {
     if limit == 0 { return 0; }
@@ -1428,7 +1384,6 @@ fn sentence_count(s: &str) -> usize {
         .count()
 }
 
-#[inline]
 #[inline]
 fn hash_strings(list: &[String]) -> u64 {
     let mut hasher = FxHasher::default();
