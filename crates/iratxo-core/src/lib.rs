@@ -20,8 +20,10 @@ pub use ir::{Predicate, Program, Rule, Verdict};
 ///       `CharCount`, `LineCount`, `DigitRatioAbove`, `PunctuationRatioAbove`,
 ///       `RepeatedCharRun`, `RepeatedToken`, `TypeTokenRatioBelow`,
 ///       `HasInvisibleChars`, `HasMixedScriptToken`, `ScriptIs`).
+///   4 — boxes `Predicate::SemanticMatch` data to shrink `Predicate` enum
+///       size from ~96 bytes to ~40 bytes, improving cache locality.
 pub const IR_MAGIC: &[u8; 4] = b"IRTX";
-pub const IR_VERSION: u16 = 3;
+pub const IR_VERSION: u16 = 4;
 
 #[derive(Debug)]
 pub enum DecodeError {

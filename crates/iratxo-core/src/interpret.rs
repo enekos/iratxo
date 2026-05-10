@@ -363,33 +363,34 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             })
         }
 
-        Predicate::SemanticMatch { examples, threshold, extra_synonyms, language } => {
-            let lang = language
+        Predicate::SemanticMatch(data) => {
+            let lang = data.language
                 .as_deref()
                 .and_then(crate::text::Language::from_code)
                 .unwrap_or_else(|| ctx.detect_language());
 
-            let (extra_idx, extra_hash) = if extra_synonyms.is_empty() {
+            let mut fallback_idx: Option<semantic::SynonymIndex> = None;
+            let (extra_idx, hash) = if data.extra_synonyms.is_empty() {
                 (None, 0u64)
             } else {
                 let mut json = String::from("{");
-                for (i, (canonical, syns)) in extra_synonyms.iter().enumerate() {
+                for (i, (canonical, syns)) in data.extra_synonyms.iter().enumerate() {
                     if i > 0 { json.push(','); }
                     json.push_str(&format!("{}:{}",
                         serde_json::to_string(canonical).unwrap(),
                         serde_json::to_string(syns).unwrap()));
                 }
                 json.push('}');
-                // Cheap hash of the JSON for cache keying.
                 let h = semantic::fnv1a64(json.as_bytes());
-                (Some(semantic::SynonymIndex::from_json_for(&json, lang)), h)
+                fallback_idx = Some(semantic::SynonymIndex::from_json_for(&json, lang));
+                (fallback_idx.as_ref(), h)
             };
 
-            with_metrics(|m| m.semantic_similarity_calls += examples.len() as u64);
-            let input_embed = ctx.semantic_embed(lang, extra_idx.as_ref(), extra_hash);
-            examples.iter().any(|ex| {
-                let ex_embed = semantic::embed_input(ex, lang, extra_idx.as_ref());
-                semantic::cosine(&input_embed, &ex_embed) >= *threshold
+            with_metrics(|m| m.semantic_similarity_calls += data.examples.len() as u64);
+            let input_embed = ctx.semantic_embed(lang, extra_idx, hash);
+            data.examples.iter().any(|ex| {
+                let ex_embed = semantic::embed_input(ex, lang, extra_idx);
+                semantic::cosine(&input_embed, &ex_embed) >= data.threshold
             })
         }
 

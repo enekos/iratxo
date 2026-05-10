@@ -47,12 +47,7 @@ pub enum Predicate {
     /// Token count <= n.
     MaxLength { tokens: u32 },
     /// True if input is semantically similar to any example, above `threshold`.
-    SemanticMatch {
-        examples: Vec<String>,
-        threshold: f32,
-        extra_synonyms: Vec<(String, Vec<String>)>,
-        language: Option<String>,
-    },
+    SemanticMatch(Box<SemanticMatchData>),
     /// Markdown/HTML heading whose text matches one of the given strings
     /// (case-insensitive, trimmed). Recognizes `#`-style and `<h1>..<h6>`.
     HasSection { titles: Vec<String> },
@@ -157,13 +152,21 @@ impl Predicate {
             Predicate::HasSection { .. }
             | Predicate::HasUrlToDomain { .. } => 4,
             Predicate::HasEntity { .. }
-            | Predicate::SemanticMatch { .. } => 5,
+            | Predicate::SemanticMatch(_) => 5,
             Predicate::All(inner) | Predicate::Any(inner) => {
                 inner.iter().map(|p| p.cost_estimate()).max().unwrap_or(0)
             }
             Predicate::Not(inner) => inner.cost_estimate(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticMatchData {
+    pub examples: Vec<String>,
+    pub threshold: f32,
+    pub extra_synonyms: Vec<(String, Vec<String>)>,
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

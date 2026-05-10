@@ -563,12 +563,12 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
                 return Err(DslError::Validation(format!("unsupported language: {} (use en|es|ca|eu)", code)));
             }
         }
-        variants.push(Predicate::SemanticMatch {
+        variants.push(Predicate::SemanticMatch(Box::new(crate::ir::SemanticMatchData {
             examples: s.examples,
             threshold: s.threshold,
             extra_synonyms: extra,
             language: s.language,
-        });
+        })));
     }
 
     match variants.len() {
