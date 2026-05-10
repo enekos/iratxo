@@ -2,7 +2,7 @@ use crate::ir::{EntityKind, Predicate, Program, Rule, Verdict};
 use crate::semantic;
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
-use std::cell::RefCell;
+use std::cell::{RefCell, UnsafeCell};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash as _, Hasher};
 use std::rc::Rc;
@@ -86,6 +86,7 @@ struct RuleTriggerVec {
     vec: Vec<bool>,
     winner_idx: u8,
     explanation_count: u8,
+    triggered_count: u8,
 }
 
 impl RuleTriggerVec {
@@ -96,12 +97,15 @@ impl RuleTriggerVec {
 
     #[inline]
     fn set_triggered(&mut self, idx: usize) {
+        if !self.vec[idx] {
+            self.triggered_count += 1;
+        }
         self.vec[idx] = true;
     }
 
     #[inline]
     fn new(len: usize) -> Self {
-        RuleTriggerVec { vec: vec![false; len], winner_idx: 255, explanation_count: 0 }
+        RuleTriggerVec { vec: vec![false; len], winner_idx: 255, explanation_count: 0, triggered_count: 0 }
     }
 }
 
@@ -164,7 +168,7 @@ impl CachedTriggerResult {
     fn triggered_count(&self) -> u8 {
         match self {
             CachedTriggerResult::Small(bits) => bits.triggered_count,
-            CachedTriggerResult::Large(_) => 0, // fallback: not used for Large
+            CachedTriggerResult::Large(vec) => vec.triggered_count,
         }
     }
 
@@ -239,7 +243,7 @@ thread_local! {
     /// Uses a u64 bitset for ≤64 rules, Vec<bool> fallback for larger programs.
     /// Also stores the pre-computed winner_idx to avoid max_by scan on cache hits.
     /// Stored in Rc to avoid cloning the Vec<bool> on every cache hit.
-    static RULE_TRIGGER_VEC_CACHE: RefCell<FxHashMap<(u64, u64), Rc<CachedTriggerResult>>> = RefCell::new(FxHashMap::default());
+    static RULE_TRIGGER_VEC_CACHE: UnsafeCell<FxHashMap<(u64, u64), Rc<CachedTriggerResult>>> = UnsafeCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -353,13 +357,13 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
         };
     }
     let ctx = Ctx::new(input);
-    let mut triggered: Vec<TriggeredRuleRef<'a>> = Vec::with_capacity(program.rules.len());
 
     // Fast path: check if we have a cached trigger vector for this input.
     let program_ptr = program as *const _ as u64;
     let cache_key = (program_ptr, ctx.input_hash);
-    let cached = RULE_TRIGGER_VEC_CACHE.with(|cell| cell.borrow().get(&cache_key).map(|rc| Rc::clone(rc)));
+    let cached = RULE_TRIGGER_VEC_CACHE.with(|cell| unsafe { (*cell.get()).get(&cache_key).map(|rc| Rc::clone(rc)) });
     if let Some(triggers) = cached {
+        let mut triggered: Vec<TriggeredRuleRef<'a>> = Vec::with_capacity(triggers.triggered_count() as usize + 4);
         let mut visited: Option<HashSet<&'a str>> = None;
         let mut triggered_count = 0usize;
         // Fast path for Small variant: iterate only over triggered rule indices.
@@ -446,6 +450,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
         };
     }
 
+    let mut triggered: Vec<TriggeredRuleRef<'a>> = Vec::with_capacity(program.rules.len());
     let mut visited: Option<HashSet<&'a str>> = None;
     let mut trigger_bits = CachedTriggerResult::new(program.rules.len());
     for (i, rule) in program.rules.iter().enumerate() {
@@ -481,8 +486,8 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
         triggered.iter().position(|t| std::ptr::eq(t as *const _, w as *const _)).unwrap_or(255) as u8
     }).unwrap_or(255));
     trigger_bits.set_explanation_count(explanation_count);
-    RULE_TRIGGER_VEC_CACHE.with(|cell| {
-        let mut cache = cell.borrow_mut();
+    RULE_TRIGGER_VEC_CACHE.with(|cell| unsafe {
+        let cache = &mut *cell.get();
         cache.insert(cache_key, Rc::new(trigger_bits));
         if cache.len() > 256 { cache.clear(); }
     });
@@ -600,6 +605,7 @@ struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
+    #[inline]
     fn new(input: &'a str) -> Self {
         let ptr = input.as_ptr() as u64;
 
@@ -1289,6 +1295,22 @@ fn regex_count_early(re: &Regex, input: &str, limit: u32) -> usize {
     count
 }
 
+/// Build an ASCII-only regex (unicode disabled) for faster matching on ASCII inputs.
+#[inline]
+fn ascii_regex(pattern: &str) -> Regex {
+    let mut builder = RegexBuilder::new(pattern);
+    builder.unicode(false);
+    builder.build().unwrap()
+}
+
+#[inline]
+fn ascii_regex_caseless(pattern: &str) -> Regex {
+    let mut builder = RegexBuilder::new(pattern);
+    builder.unicode(false);
+    builder.case_insensitive(true);
+    builder.build().unwrap()
+}
+
 #[inline]
 fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
     use std::sync::OnceLock;
@@ -1306,12 +1328,12 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
     let need_one = min_count <= 1;
     match kind {
         EntityKind::Email    => {
-            let re = EMAIL.get_or_init(|| Regex::new(r"(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b").unwrap());
+            let re = EMAIL.get_or_init(|| ascii_regex_caseless(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b"));
             if need_one { return re.is_match(input) as usize; }
             regex_count_early(re, input, min_count)
         }
         EntityKind::Phone    => {
-            let re = PHONE.get_or_init(|| Regex::new(r"\b(?:\+?\d{1,3}[\s\-.]?)?(?:\(?\d{2,4}\)?[\s\-.]?){2,4}\d{2,4}\b").unwrap());
+            let re = PHONE.get_or_init(|| ascii_regex(r"\b(?:\+?\d{1,3}[\s\-.]?)?(?:\(?\d{2,4}\)?[\s\-.]?){2,4}\d{2,4}\b"));
             if need_one { return re.is_match(input) as usize; }
             regex_count_early(re, input, min_count)
         }
@@ -1326,7 +1348,7 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
             regex_count_early(re, input, min_count)
         }
         EntityKind::IpAddress => {
-            let v4 = IP.get_or_init(|| Regex::new(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})\b").unwrap());
+            let v4 = IP.get_or_init(|| ascii_regex(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})\b"));
             if need_one {
                 return (v4.is_match(input) || input.split_whitespace().any(|tok| looks_like_ipv6(tok.trim_matches(|c: char| !c.is_alphanumeric() && c != ':')))) as usize;
             }
@@ -1341,7 +1363,7 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
             count
         }
         EntityKind::CreditCard => {
-            let re = CARD.get_or_init(|| Regex::new(r"\b(?:\d[ -]?){13,19}\b").unwrap());
+            let re = CARD.get_or_init(|| ascii_regex(r"\b(?:\d[ -]?){13,19}\b"));
             if need_one { return re.find(input).map_or(0, |m| luhn_check(m.as_str()) as usize); }
             let mut count = 0usize;
             for m in re.find_iter(input) {
@@ -1353,12 +1375,12 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
             count
         }
         EntityKind::Iban => {
-            let re = IBAN.get_or_init(|| Regex::new(r"(?i)\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b").unwrap());
+            let re = IBAN.get_or_init(|| ascii_regex_caseless(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b"));
             if need_one { return re.is_match(input) as usize; }
             regex_count_early(re, input, min_count)
         }
         EntityKind::DateIso  => {
-            let re = DATE.get_or_init(|| Regex::new(r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b").unwrap());
+            let re = DATE.get_or_init(|| ascii_regex(r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b"));
             if need_one { return re.is_match(input) as usize; }
             regex_count_early(re, input, min_count)
         }
@@ -1529,12 +1551,20 @@ fn token_uses_multiple_scripts(tok: &str) -> bool {
 /// Validate a putative credit-card number using the Luhn checksum.
 /// `s` may contain spaces or hyphens between digit groups.
 fn luhn_check(s: &str) -> bool {
-    let digits: Vec<u32> = s.chars().filter_map(|c| c.to_digit(10)).collect();
-    if !(13..=19).contains(&digits.len()) { return false; }
+    let mut digits = [0u32; 19];
+    let mut len = 0usize;
+    for c in s.chars() {
+        if let Some(d) = c.to_digit(10) {
+            if len >= 19 { return false; }
+            digits[len] = d;
+            len += 1;
+        }
+    }
+    if !(13..=19).contains(&len) { return false; }
     let mut sum = 0u32;
     let mut alt = false;
-    for &d in digits.iter().rev() {
-        let mut x = d;
+    for i in (0..len).rev() {
+        let mut x = digits[i];
         if alt { x *= 2; if x > 9 { x -= 9; } }
         sum += x;
         alt = !alt;
@@ -1548,9 +1578,24 @@ fn luhn_check(s: &str) -> bool {
 fn looks_like_ipv6(tok: &str) -> bool {
     if tok.matches(':').count() < 2 { return false; }
     if !tok.chars().all(|c| c.is_ascii_hexdigit() || c == ':') { return false; }
-    let groups: Vec<&str> = tok.split(':').filter(|g| !g.is_empty()).collect();
-    if groups.len() < 2 { return false; }
-    groups.iter().all(|g| g.len() <= 4)
+    let mut groups = 0usize;
+    let mut group_len = 0usize;
+    for c in tok.chars() {
+        if c == ':' {
+            if group_len > 0 {
+                if group_len > 4 { return false; }
+                groups += 1;
+                group_len = 0;
+            }
+        } else {
+            group_len += 1;
+        }
+    }
+    if group_len > 0 {
+        if group_len > 4 { return false; }
+        groups += 1;
+    }
+    groups >= 2
 }
 
 /// Fast path for the common emoji ranges. Not perfect; covers the ranges

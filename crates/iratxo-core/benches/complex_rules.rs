@@ -378,7 +378,7 @@ fn build_20kb_doc() -> String {
 fn bench_workload(name: &str, program: &iratxo_core::Program, input: &str, iterations: u32) {
     // Warmup
     for _ in 0..iterations / 10 {
-        let _ = iratxo_core::evaluate(program, input);
+        let _ = iratxo_core::evaluate_ref(program, input);
     }
 
     // Single metrics-collecting run for ratios
