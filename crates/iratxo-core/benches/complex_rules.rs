@@ -386,7 +386,7 @@ fn bench_workload(name: &str, program: &iratxo_core::Program, input: &str, itera
 
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = iratxo_core::evaluate(program, input);
+        let _ = iratxo_core::evaluate_ref(program, input);
     }
     let elapsed = start.elapsed();
     let total_us = elapsed.as_micros() as f64;

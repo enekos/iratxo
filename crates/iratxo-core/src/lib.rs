@@ -4,7 +4,7 @@ pub mod interpret;
 pub mod semantic;
 pub mod text;
 
-pub use interpret::{evaluate, evaluate_with_metrics, EvalMetrics, EvalResult, TriggeredRule};
+pub use interpret::{evaluate, evaluate_ref, evaluate_with_metrics, EvalMetrics, EvalResult, EvalResultRef, TriggeredRule, TriggeredRuleRef};
 pub use ir::{Predicate, Program, Rule, Verdict};
 
 /// `IRTX` magic + IR version. Any change to the IR layout that is not backwards

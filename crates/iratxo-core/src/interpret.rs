@@ -78,30 +78,67 @@ pub struct TriggeredRule {
     pub explanation: Option<String>,
 }
 
+/// Zero-copy evaluation result that borrows strings from `program`.
+/// Useful for Wasm and other contexts where the result is serialized
+/// immediately and string clones are pure overhead.
+#[derive(Debug, Serialize)]
+pub struct EvalResultRef<'a> {
+    pub classification: &'a str,
+    pub confidence: f32,
+    pub triggered: Vec<TriggeredRuleRef<'a>>,
+    pub explanations: Vec<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TriggeredRuleRef<'a> {
+    pub id: &'a str,
+    pub classification: &'a str,
+    pub confidence: f32,
+    pub explanation: Option<&'a str>,
+}
+
 /// Evaluate `program` against `input`. Triggered rules are collected (with
 /// chained `then` rules followed transitively, cycle-safe). The triggered
 /// rule with the highest confidence wins; if none trigger, the program's
 /// `default` verdict is used.
 pub fn evaluate(program: &Program, input: &str) -> EvalResult {
+    let r = evaluate_ref(program, input);
+    EvalResult {
+        classification: r.classification.to_string(),
+        confidence: r.confidence,
+        triggered: r.triggered.into_iter().map(|t| TriggeredRule {
+            id: t.id.to_string(),
+            classification: t.classification.to_string(),
+            confidence: t.confidence,
+            explanation: t.explanation.map(|s| s.to_string()),
+        }).collect(),
+        explanations: r.explanations.into_iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+/// Zero-copy variant of [`evaluate`]. Returns borrowed strings referencing
+/// the compiled `program`. The caller must ensure `program` outlives the
+/// returned value (true in the typical compile-once-evaluate-many pattern).
+pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> {
     let ctx = Ctx::new(input);
-    let mut triggered: Vec<TriggeredRule> = Vec::new();
-    let mut visited: HashSet<&str> = HashSet::new();
+    let mut triggered: Vec<TriggeredRuleRef<'a>> = Vec::new();
+    let mut visited: HashSet<&'a str> = HashSet::new();
     for rule in &program.rules {
         if program.chained_targets.contains(&rule.id) { continue; }
-        eval_rule(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
+        eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
     }
 
-    let winner: &Verdict = triggered
+    let winner = triggered
         .iter()
-        .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal))
-        .and_then(|t| program.rules.iter().find(|r| r.id == t.id).map(|r| &r.verdict))
-        .unwrap_or(&program.default);
+        .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal));
 
-    let explanations = triggered.iter().filter_map(|t| t.explanation.clone()).collect();
+    let classification = winner.map(|t| t.classification).unwrap_or(&program.default.classify);
+    let confidence = winner.map(|t| t.confidence).unwrap_or(program.default.confidence);
+    let explanations: Vec<&'a str> = triggered.iter().filter_map(|t| t.explanation).collect();
 
-    EvalResult {
-        classification: winner.classify.clone(),
-        confidence: winner.confidence,
+    EvalResultRef {
+        classification,
+        confidence,
         triggered,
         explanations,
     }
@@ -122,7 +159,7 @@ fn eval_rule<'a>(
             m.max_chain_depth = depth;
         }
     });
-    if !visited.insert(rule.id.as_str()) { return; } // cycle / duplicate guard
+    if !visited.insert(rule.id.as_str()) { return; }
     if !eval_predicate(&rule.when, ctx) { return; }
     with_metrics(|m| m.triggered_rules += 1);
     out.push(TriggeredRule {
@@ -135,6 +172,38 @@ fn eval_rule<'a>(
         if let Some(next) = rules.iter().find(|r| r.id == *chained_id) {
             with_metrics(|m| m.chain_traversals += 1);
             eval_rule(next, rules, ctx, out, visited, depth + 1);
+        }
+    }
+}
+
+#[inline]
+fn eval_rule_ref<'a>(
+    rule: &'a Rule,
+    rules: &'a [Rule],
+    ctx: &Ctx,
+    out: &mut Vec<TriggeredRuleRef<'a>>,
+    visited: &mut HashSet<&'a str>,
+    depth: u64,
+) {
+    with_metrics(|m| {
+        m.rule_evals += 1;
+        if depth > m.max_chain_depth {
+            m.max_chain_depth = depth;
+        }
+    });
+    if !visited.insert(rule.id.as_str()) { return; }
+    if !eval_predicate(&rule.when, ctx) { return; }
+    with_metrics(|m| m.triggered_rules += 1);
+    out.push(TriggeredRuleRef {
+        id: rule.id.as_str(),
+        classification: rule.verdict.classify.as_str(),
+        confidence: rule.verdict.confidence,
+        explanation: rule.verdict.explanation.as_deref(),
+    });
+    for chained_id in &rule.then {
+        if let Some(next) = rules.iter().find(|r| r.id == *chained_id) {
+            with_metrics(|m| m.chain_traversals += 1);
+            eval_rule_ref(next, rules, ctx, out, visited, depth + 1);
         }
     }
 }
@@ -638,6 +707,18 @@ fn shannon_entropy(s: &str) -> f32 {
     }).sum()
 }
 
+/// Count regex matches, stopping as soon as `limit` is reached.
+#[inline]
+fn regex_count_early(re: &Regex, input: &str, limit: u32) -> usize {
+    if limit == 0 { return 0; }
+    let mut count = 0usize;
+    for _ in re.find_iter(input) {
+        count += 1;
+        if count >= limit as usize { break; }
+    }
+    count
+}
+
 #[inline]
 fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
     use std::sync::OnceLock;
@@ -657,61 +738,80 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
         EntityKind::Email    => {
             let re = EMAIL.get_or_init(|| Regex::new(r"(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b").unwrap());
             if need_one { return re.is_match(input) as usize; }
-            re.find_iter(input).count()
+            regex_count_early(re, input, min_count)
         }
         EntityKind::Phone    => {
             let re = PHONE.get_or_init(|| Regex::new(r"\b(?:\+?\d{1,3}[\s\-.]?)?(?:\(?\d{2,4}\)?[\s\-.]?){2,4}\d{2,4}\b").unwrap());
             if need_one { return re.is_match(input) as usize; }
-            re.find_iter(input).count()
+            regex_count_early(re, input, min_count)
         }
         EntityKind::Url      => {
             let re = URL.get_or_init(|| Regex::new(r"(?i)\bhttps?://[a-z0-9.\-]+(?:/[^\s]*)?").unwrap());
             if need_one { return re.is_match(input) as usize; }
-            re.find_iter(input).count()
+            regex_count_early(re, input, min_count)
         }
         EntityKind::Currency => {
             let re = CURR.get_or_init(|| Regex::new(r"(?:[\$£€¥]\s?\d{1,3}(?:[,.]\d{3})*(?:\.\d+)?|\b\d+(?:[.,]\d+)?\s?(?:USD|EUR|GBP|JPY)\b)").unwrap());
             if need_one { return re.is_match(input) as usize; }
-            re.find_iter(input).count()
+            regex_count_early(re, input, min_count)
         }
         EntityKind::IpAddress => {
             let v4 = IP.get_or_init(|| Regex::new(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})\b").unwrap());
             if need_one {
                 return (v4.is_match(input) || input.split_whitespace().any(|tok| looks_like_ipv6(tok.trim_matches(|c: char| !c.is_alphanumeric() && c != ':')))) as usize;
             }
-            let v6_count = input.split_whitespace()
-                .filter(|tok| looks_like_ipv6(tok.trim_matches(|c: char| !c.is_alphanumeric() && c != ':')))
-                .count();
-            v4.find_iter(input).count() + v6_count
+            let mut count = regex_count_early(v4, input, min_count);
+            if count >= min_count as usize { return count; }
+            for tok in input.split_whitespace() {
+                if looks_like_ipv6(tok.trim_matches(|c: char| !c.is_alphanumeric() && c != ':')) {
+                    count += 1;
+                    if count >= min_count as usize { break; }
+                }
+            }
+            count
         }
         EntityKind::CreditCard => {
             let re = CARD.get_or_init(|| Regex::new(r"\b(?:\d[ -]?){13,19}\b").unwrap());
             if need_one { return re.find(input).map_or(0, |m| luhn_check(m.as_str()) as usize); }
-            re.find_iter(input).filter(|m| luhn_check(m.as_str())).count()
+            let mut count = 0usize;
+            for m in re.find_iter(input) {
+                if luhn_check(m.as_str()) {
+                    count += 1;
+                    if count >= min_count as usize { break; }
+                }
+            }
+            count
         }
         EntityKind::Iban => {
             let re = IBAN.get_or_init(|| Regex::new(r"(?i)\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b").unwrap());
             if need_one { return re.is_match(input) as usize; }
-            re.find_iter(input).count()
+            regex_count_early(re, input, min_count)
         }
         EntityKind::DateIso  => {
             let re = DATE.get_or_init(|| Regex::new(r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b").unwrap());
             if need_one { return re.is_match(input) as usize; }
-            re.find_iter(input).count()
+            regex_count_early(re, input, min_count)
         }
         EntityKind::Hashtag  => {
             let re = HASHTAG.get_or_init(|| Regex::new(r"(?:^|[\s(\[{,;:])#[A-Za-z][\w]{0,49}").unwrap());
             if need_one { return re.is_match(input) as usize; }
-            re.find_iter(input).count()
+            regex_count_early(re, input, min_count)
         }
         EntityKind::Mention  => {
             let re = MENTION.get_or_init(|| Regex::new(r"(?:^|[\s(\[{,;:])@[A-Za-z0-9_][\w.\-]{0,49}").unwrap());
             if need_one { return re.is_match(input) as usize; }
-            re.find_iter(input).count()
+            regex_count_early(re, input, min_count)
         }
         EntityKind::Emoji    => {
             if need_one { return input.chars().any(is_emoji_char) as usize; }
-            input.chars().filter(|c| is_emoji_char(*c)).count()
+            let mut count = 0usize;
+            for c in input.chars() {
+                if is_emoji_char(c) {
+                    count += 1;
+                    if count >= min_count as usize { break; }
+                }
+            }
+            count
         }
     }
 }

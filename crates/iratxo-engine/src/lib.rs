@@ -94,7 +94,7 @@ pub extern "C" fn iratxo_execute(
 
     let json = match program_rc {
         Some(program) => {
-            let result = iratxo_core::evaluate(&program, input);
+            let result = iratxo_core::evaluate_ref(&program, input);
             serde_json::to_vec(&result).unwrap_or_else(|_| b"{\"error\":\"serialize\"}".to_vec())
         }
         None => {
