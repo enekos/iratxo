@@ -1313,8 +1313,12 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
     let need_one = min_count <= 1;
     match kind {
         EntityKind::Email    => {
+            if need_one {
+                // Fast path: use memchr to find '@', then validate manually.
+                // Much faster than regex for inputs with few '@' characters.
+                return has_email_fast(input) as usize;
+            }
             let re = EMAIL.get_or_init(|| ascii_regex_caseless(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b"));
-            if need_one { return re.is_match(input) as usize; }
             regex_count_early(re, input, min_count)
         }
         EntityKind::Phone    => {
@@ -1463,20 +1467,111 @@ fn counts(input: &str, input_hash: u64) -> Counts {
     if let Some(c) = cached {
         return c;
     }
-    let c = Counts {
-        paragraphs: paragraph_count(input),
-        sentences: sentence_count(input),
-        lines: if input.is_empty() { 0 } else { input.lines().count() },
-        chars: input.chars().count(),
-        tokens: token_count(input),
-        max_words_per_sentence: max_words_per_sentence(input),
-    };
+    let c = counts_impl(input);
     COUNTS_CACHE.with(|cell| {
         let mut cache = cell.borrow_mut();
         cache.insert(input_hash, c);
         if cache.len() > 256 { cache.clear(); }
     });
     c
+}
+
+/// Unified single-pass scan that computes all text shape counts together.
+/// Avoids 6 independent scans of the input, saving significant memory
+/// bandwidth on large inputs.
+#[inline]
+fn counts_impl(input: &str) -> Counts {
+    let mut paragraphs = 0usize;
+    let mut sentences = 0usize;
+    let mut lines = 0usize;
+    let mut chars = 0usize;
+    let mut tokens = 0usize;
+    let mut max_words = 0usize;
+
+    let mut in_para = false;
+    let mut prev_newline = false;
+    let mut in_sent = false;
+    let mut in_word = false;
+    let mut sent_word_count = 0usize;
+
+    for c in input.chars() {
+        chars += 1;
+
+        // Lines
+        if c == '\n' {
+            lines += 1;
+        }
+
+        // Paragraphs (split on "\n\n")
+        if c == '\n' {
+            if prev_newline {
+                if in_para {
+                    paragraphs += 1;
+                    in_para = false;
+                }
+            }
+            prev_newline = true;
+        } else if !c.is_whitespace() {
+            in_para = true;
+            prev_newline = false;
+        }
+
+        // Sentences (split on '.', '!', '?')
+        if matches!(c, '.' | '!' | '?') {
+            if in_sent {
+                if in_word {
+                    sent_word_count += 1;
+                    in_word = false;
+                }
+                sentences += 1;
+                if sent_word_count > max_words {
+                    max_words = sent_word_count;
+                }
+                sent_word_count = 0;
+                in_sent = false;
+            }
+        } else if c.is_whitespace() {
+            if in_word {
+                sent_word_count += 1;
+                in_word = false;
+            }
+        } else {
+            in_sent = true;
+            in_word = true;
+        }
+    }
+
+    // Finalize trailing sentence/paragraph/token
+    if in_word {
+        tokens += 1;
+        sent_word_count += 1;
+    }
+    if in_sent {
+        sentences += 1;
+        if sent_word_count > max_words {
+            max_words = sent_word_count;
+        }
+    }
+    if in_para {
+        paragraphs += 1;
+    }
+    if input.is_empty() {
+        lines = 0;
+    } else if lines == 0 {
+        lines = 1;
+    }
+    if paragraphs == 0 && !input.trim().is_empty() {
+        paragraphs = 1;
+    }
+
+    Counts {
+        paragraphs,
+        sentences,
+        lines,
+        chars,
+        tokens,
+        max_words_per_sentence: max_words,
+    }
 }
 
 /// Zero-width and BOM-style invisible characters that appear in homoglyph/
@@ -1528,6 +1623,75 @@ fn token_uses_multiple_scripts(tok: &str) -> bool {
                 _ => {}
             }
         }
+    }
+    false
+}
+
+/// Fast email detection using memchr to find '@' characters, then manual
+/// validation of the surrounding text. Avoids regex overhead for the common
+/// case of inputs with few or no '@' characters.
+#[inline]
+fn has_email_fast(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    for at_pos in memchr::memchr_iter(b'@', bytes) {
+        // Validate local part (before @)
+        let mut local_start = at_pos;
+        while local_start > 0 {
+            let b = bytes[local_start - 1];
+            if b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'%' || b == b'+' || b == b'-' {
+                local_start -= 1;
+            } else {
+                break;
+            }
+        }
+        if local_start == at_pos {
+            continue; // no local part
+        }
+        // Word boundary before local part
+        if local_start > 0 {
+            let prev = bytes[local_start - 1];
+            if prev.is_ascii_alphanumeric() || prev == b'_' {
+                continue;
+            }
+        }
+        // Validate domain part (after @)
+        let mut domain_end = at_pos + 1;
+        let mut dot_pos = None;
+        while domain_end < bytes.len() {
+            let b = bytes[domain_end];
+            if b.is_ascii_alphanumeric() || b == b'.' || b == b'-' {
+                if b == b'.' {
+                    dot_pos = Some(domain_end);
+                }
+                domain_end += 1;
+            } else {
+                break;
+            }
+        }
+        // Must have at least one dot in domain and TLD >= 2 chars
+        let tld_start = dot_pos.map(|p| p + 1).unwrap_or(0);
+        if tld_start == 0 || domain_end - tld_start < 2 {
+            continue;
+        }
+        // TLD must be alphabetic
+        let mut tld_valid = true;
+        for i in tld_start..domain_end {
+            if !bytes[i].is_ascii_alphabetic() {
+                tld_valid = false;
+                break;
+            }
+        }
+        if !tld_valid {
+            continue;
+        }
+        // Word boundary after domain
+        if domain_end < bytes.len() {
+            let next = bytes[domain_end];
+            if next.is_ascii_alphanumeric() || next == b'_' {
+                continue;
+            }
+        }
+        return true;
     }
     false
 }
