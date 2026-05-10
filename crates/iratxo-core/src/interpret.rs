@@ -205,7 +205,8 @@ thread_local! {
     /// Cross-evaluate cache for rule trigger results keyed by (program_ptr, input_hash).
     /// Uses a u32 bitset for ≤32 rules, Vec<bool> fallback for larger programs.
     /// Also stores the pre-computed winner_idx to avoid max_by scan on cache hits.
-    static RULE_TRIGGER_VEC_CACHE: RefCell<FxHashMap<(u64, u64), CachedTriggerResult>> = RefCell::new(FxHashMap::default());
+    /// Stored in Rc to avoid cloning the Vec<bool> on every cache hit.
+    static RULE_TRIGGER_VEC_CACHE: RefCell<FxHashMap<(u64, u64), Rc<CachedTriggerResult>>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -305,7 +306,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
     // Fast path: check if we have a cached trigger vector for this input.
     let program_ptr = program as *const _ as u64;
     let cache_key = (program_ptr, ctx.input_hash);
-    let cached = RULE_TRIGGER_VEC_CACHE.with(|cell| cell.borrow().get(&cache_key).cloned());
+    let cached = RULE_TRIGGER_VEC_CACHE.with(|cell| cell.borrow().get(&cache_key).map(|rc| Rc::clone(rc)));
     if let Some(triggers) = cached {
         let mut visited: Option<HashSet<&'a str>> = None;
         let mut triggered_count = 0usize;
@@ -398,7 +399,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
     trigger_bits.set_explanation_count(explanation_count);
     RULE_TRIGGER_VEC_CACHE.with(|cell| {
         let mut cache = cell.borrow_mut();
-        cache.insert(cache_key, trigger_bits);
+        cache.insert(cache_key, Rc::new(trigger_bits));
         if cache.len() > 256 { cache.clear(); }
     });
 
