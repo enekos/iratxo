@@ -333,6 +333,14 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
 /// returned value (true in the typical compile-once-evaluate-many pattern).
 #[inline]
 pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> {
+    if program.rules.is_empty() {
+        return EvalResultRef {
+            classification: &program.default.classify,
+            confidence: program.default.confidence,
+            triggered: Vec::new(),
+            explanations: Vec::new(),
+        };
+    }
     let ctx = Ctx::new(input);
     let mut triggered: Vec<TriggeredRuleRef<'a>> = Vec::with_capacity(program.rules.len());
 
