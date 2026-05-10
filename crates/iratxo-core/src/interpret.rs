@@ -38,34 +38,98 @@ pub struct EvalMetrics {
 /// Compact bitset for rule trigger results. Uses u32 for ≤32 rules (no heap allocation),
 /// falls back to Vec<bool> for larger programs.
 #[derive(Clone)]
-enum RuleTriggerBits {
-    Small(u32),
-    Large(Vec<bool>),
+struct RuleTriggerBits {
+    bits: u32,
+    // 255 = no winner, otherwise index of winning rule in triggered Vec.
+    winner_idx: u8,
 }
 
 impl RuleTriggerBits {
     #[inline]
     fn is_triggered(&self, idx: usize) -> bool {
+        self.bits & (1u32 << idx) != 0
+    }
+
+    #[inline]
+    fn set_triggered(&mut self, idx: usize) {
+        self.bits |= 1u32 << idx;
+    }
+
+    #[inline]
+    fn new() -> Self {
+        RuleTriggerBits { bits: 0, winner_idx: 255 }
+    }
+}
+
+/// Fallback for programs with >32 rules.
+#[derive(Clone)]
+struct RuleTriggerVec {
+    vec: Vec<bool>,
+    winner_idx: u8,
+}
+
+impl RuleTriggerVec {
+    #[inline]
+    fn is_triggered(&self, idx: usize) -> bool {
+        self.vec[idx]
+    }
+
+    #[inline]
+    fn set_triggered(&mut self, idx: usize) {
+        self.vec[idx] = true;
+    }
+
+    #[inline]
+    fn new(len: usize) -> Self {
+        RuleTriggerVec { vec: vec![false; len], winner_idx: 255 }
+    }
+}
+
+#[derive(Clone)]
+enum CachedTriggerResult {
+    Small(RuleTriggerBits),
+    Large(RuleTriggerVec),
+}
+
+impl CachedTriggerResult {
+    #[inline]
+    fn is_triggered(&self, idx: usize) -> bool {
         match self {
-            RuleTriggerBits::Small(bits) => bits & (1u32 << idx) != 0,
-            RuleTriggerBits::Large(vec) => vec[idx],
+            CachedTriggerResult::Small(bits) => bits.is_triggered(idx),
+            CachedTriggerResult::Large(vec) => vec.is_triggered(idx),
         }
     }
 
     #[inline]
     fn set_triggered(&mut self, idx: usize) {
         match self {
-            RuleTriggerBits::Small(bits) => *bits |= 1u32 << idx,
-            RuleTriggerBits::Large(vec) => vec[idx] = true,
+            CachedTriggerResult::Small(bits) => bits.set_triggered(idx),
+            CachedTriggerResult::Large(vec) => vec.set_triggered(idx),
+        }
+    }
+
+    #[inline]
+    fn winner_idx(&self) -> u8 {
+        match self {
+            CachedTriggerResult::Small(bits) => bits.winner_idx,
+            CachedTriggerResult::Large(vec) => vec.winner_idx,
+        }
+    }
+
+    #[inline]
+    fn set_winner_idx(&mut self, idx: u8) {
+        match self {
+            CachedTriggerResult::Small(bits) => bits.winner_idx = idx,
+            CachedTriggerResult::Large(vec) => vec.winner_idx = idx,
         }
     }
 
     #[inline]
     fn new(len: usize) -> Self {
         if len <= 32 {
-            RuleTriggerBits::Small(0)
+            CachedTriggerResult::Small(RuleTriggerBits::new())
         } else {
-            RuleTriggerBits::Large(vec![false; len])
+            CachedTriggerResult::Large(RuleTriggerVec::new(len))
         }
     }
 }
@@ -120,9 +184,9 @@ thread_local! {
     /// Cross-evaluate cache for regex keyed by (input_hash, pattern_hash, case_sensitive).
     static REGEX_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for rule trigger results keyed by (program_ptr, input_hash).
-    /// Uses a u32 bitset where bit i = 1 means rule i triggered.
-    /// Falls back to Vec<bool> via a small wrapper if >32 rules.
-    static RULE_TRIGGER_VEC_CACHE: RefCell<FxHashMap<(u64, u64), RuleTriggerBits>> = RefCell::new(FxHashMap::default());
+    /// Uses a u32 bitset for ≤32 rules, Vec<bool> fallback for larger programs.
+    /// Also stores the pre-computed winner_idx to avoid max_by scan on cache hits.
+    static RULE_TRIGGER_VEC_CACHE: RefCell<FxHashMap<(u64, u64), CachedTriggerResult>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -244,44 +308,65 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
                 with_metrics(|m| m.rule_evals += 1);
             }
         }
-    } else {
-        let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
-        let mut trigger_bits = RuleTriggerBits::new(program.rules.len());
-        for (i, rule) in program.rules.iter().enumerate() {
-            if program.chained_targets.contains(&rule.id) {
-                continue;
-            }
-            if rule.then.is_empty() {
-                let triggers = eval_predicate(&rule.when, &ctx);
-                if triggers {
-                    trigger_bits.set_triggered(i);
-                    with_metrics(|m| m.triggered_rules += 1);
-                    triggered.push(TriggeredRuleRef {
-                        id: rule.id.as_str(),
-                        classification: rule.verdict.classify.as_str(),
-                        confidence: rule.verdict.confidence,
-                        explanation: rule.verdict.explanation.as_deref(),
-                    });
-                }
-                with_metrics(|m| m.rule_evals += 1);
-            } else {
-                let before = triggered.len();
-                eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
-                if triggered.len() > before {
-                    trigger_bits.set_triggered(i);
-                }
+        let winner = if triggers.winner_idx() == 255 {
+            None
+        } else {
+            Some(&triggered[triggers.winner_idx() as usize])
+        };
+        let classification = winner.map(|t| t.classification).unwrap_or(&program.default.classify);
+        let confidence = winner.map(|t| t.confidence).unwrap_or(program.default.confidence);
+        let mut explanations: Vec<&'a str> = Vec::with_capacity(triggered.len() / 2);
+        for t in &triggered {
+            if let Some(e) = t.explanation {
+                explanations.push(e);
             }
         }
-        RULE_TRIGGER_VEC_CACHE.with(|cell| {
-            let mut cache = cell.borrow_mut();
-            cache.insert(cache_key, trigger_bits);
-            if cache.len() > 256 { cache.clear(); }
-        });
+        return EvalResultRef {
+            classification,
+            confidence,
+            triggered,
+            explanations,
+        };
     }
 
+    let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
+    let mut trigger_bits = CachedTriggerResult::new(program.rules.len());
+    for (i, rule) in program.rules.iter().enumerate() {
+        if program.chained_targets.contains(&rule.id) {
+            continue;
+        }
+        if rule.then.is_empty() {
+            let triggers = eval_predicate(&rule.when, &ctx);
+            if triggers {
+                trigger_bits.set_triggered(i);
+                with_metrics(|m| m.triggered_rules += 1);
+                triggered.push(TriggeredRuleRef {
+                    id: rule.id.as_str(),
+                    classification: rule.verdict.classify.as_str(),
+                    confidence: rule.verdict.confidence,
+                    explanation: rule.verdict.explanation.as_deref(),
+                });
+            }
+            with_metrics(|m| m.rule_evals += 1);
+        } else {
+            let before = triggered.len();
+            eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
+            if triggered.len() > before {
+                trigger_bits.set_triggered(i);
+            }
+        }
+    }
     let winner = triggered
         .iter()
         .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    trigger_bits.set_winner_idx(winner.map(|w| {
+        triggered.iter().position(|t| std::ptr::eq(t as *const _, w as *const _)).unwrap_or(255) as u8
+    }).unwrap_or(255));
+    RULE_TRIGGER_VEC_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        cache.insert(cache_key, trigger_bits);
+        if cache.len() > 256 { cache.clear(); }
+    });
 
     let classification = winner.map(|t| t.classification).unwrap_or(&program.default.classify);
     let confidence = winner.map(|t| t.confidence).unwrap_or(program.default.confidence);
