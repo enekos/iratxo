@@ -1114,11 +1114,8 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
 
 #[inline]
 fn contains_ctx(ctx: &Ctx, needle: &str, case_sensitive: bool) -> bool {
-    if case_sensitive {
-        ctx.input.contains(needle)
-    } else {
-        ctx.lower().contains(needle)
-    }
+    let hay = if case_sensitive { ctx.input.as_bytes() } else { ctx.lower().as_bytes() };
+    memchr::memmem::find(hay, needle.as_bytes()).is_some()
 }
 
 #[inline]
