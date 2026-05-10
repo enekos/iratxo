@@ -303,6 +303,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
     let cached = RULE_TRIGGER_VEC_CACHE.with(|cell| cell.borrow().get(&cache_key).cloned());
     if let Some(triggers) = cached {
         let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
+        let mut triggered_count = 0usize;
         for (i, rule) in program.rules.iter().enumerate() {
             if program.chained_targets.contains(&rule.id) { continue; }
             // Rules with then-chains must always be evaluated via eval_rule_ref
@@ -317,16 +318,23 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
             }
             if triggers.is_triggered(i) {
                 with_metrics(|m| { m.rule_evals += 1; m.triggered_rules += 1; });
-                triggered.push(TriggeredRuleRef {
-                    id: rule.id.as_str(),
-                    classification: rule.verdict.classify.as_str(),
-                    confidence: rule.verdict.confidence,
-                    explanation: rule.verdict.explanation.as_deref(),
-                });
+                // SAFETY: triggered was allocated with capacity program.rules.len(),
+                // and we never write more than program.rules.len() elements.
+                unsafe {
+                    let ptr = triggered.as_mut_ptr().add(triggered_count);
+                    ptr.write(TriggeredRuleRef {
+                        id: rule.id.as_str(),
+                        classification: rule.verdict.classify.as_str(),
+                        confidence: rule.verdict.confidence,
+                        explanation: rule.verdict.explanation.as_deref(),
+                    });
+                }
+                triggered_count += 1;
             } else {
                 with_metrics(|m| m.rule_evals += 1);
             }
         }
+        unsafe { triggered.set_len(triggered_count); }
         let winner = if triggers.winner_idx() == 255 {
             None
         } else {
