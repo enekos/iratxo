@@ -33,6 +33,7 @@ pub struct Verdict {
 
 /// Pure, deterministic predicates over the input text.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[repr(u8)]
 pub enum Predicate {
     /// At least one of the needles appears.
     ContainsAny { needles: Vec<String>, case_sensitive: bool },

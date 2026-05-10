@@ -74,3 +74,11 @@ pub fn decode(bytes: &[u8]) -> Result<Program, DecodeError> {
         .collect();
     Ok(program)
 }
+#[cfg(test)]
+mod size_tests {
+    #[test]
+    fn predicate_size() {
+        println!("Predicate size = {}", std::mem::size_of::<crate::Predicate>());
+        println!("Option<u32> size = {}", std::mem::size_of::<Option<u32>>());
+    }
+}
