@@ -35,10 +35,12 @@ pub struct EvalMetrics {
 
 thread_local! {
     static METRICS: RefCell<Option<EvalMetrics>> = RefCell::new(None);
+    static METRICS_ENABLED: std::cell::Cell<bool> = std::cell::Cell::new(false);
 }
 
 #[inline]
 fn with_metrics<F: FnOnce(&mut EvalMetrics)>(f: F) {
+    if !METRICS_ENABLED.with(|c| c.get()) { return; }
     METRICS.with(|cell| {
         if let Some(ref mut m) = *cell.borrow_mut() {
             f(m);
@@ -50,11 +52,13 @@ fn with_metrics<F: FnOnce(&mut EvalMetrics)>(f: F) {
 /// detailed metrics snapshot. Zero-cost when not called — the normal
 /// `evaluate` path never touches the metrics thread-local.
 pub fn evaluate_with_metrics(program: &Program, input: &str) -> (EvalResult, EvalMetrics) {
+    METRICS_ENABLED.with(|c| c.set(true));
     METRICS.with(|cell| {
         *cell.borrow_mut() = Some(EvalMetrics::default());
     });
     let result = evaluate(program, input);
     let metrics = METRICS.with(|cell| cell.borrow_mut().take().unwrap_or_default());
+    METRICS_ENABLED.with(|c| c.set(false));
     (result, metrics)
 }
 
