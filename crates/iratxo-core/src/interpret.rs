@@ -51,6 +51,8 @@ thread_local! {
     static SECTION_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for lowercased input and token offsets keyed by input_hash.
     static LOWER_CACHE: RefCell<FxHashMap<u64, (String, Vec<(usize, usize)>)>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for character statistics keyed by input_hash.
+    static CHAR_STATS_CACHE: RefCell<FxHashMap<u64, CharStats>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -229,6 +231,16 @@ fn eval_rule_ref<'a>(
 /// Per-evaluation context: caches anything expensive to recompute, like
 /// compiled regexes for the input. Lives only for the duration of one
 /// `evaluate` call.
+#[derive(Clone, Copy)]
+struct CharStats {
+    letters: u32,
+    upper: u32,
+    non_whitespace: u32,
+    digits: u32,
+    punct: u32,
+    has_invisible: bool,
+}
+
 struct Ctx<'a> {
     input: &'a str,
     lower: String,
@@ -501,14 +513,8 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             })
         }
         Predicate::MostlyUppercase { min_ratio } => {
-            let (mut letters, mut upper) = (0u32, 0u32);
-            for c in input.chars() {
-                if c.is_alphabetic() {
-                    letters += 1;
-                    if c.is_uppercase() { upper += 1; }
-                }
-            }
-            if letters == 0 { false } else { (upper as f32) / (letters as f32) >= *min_ratio }
+            let stats = char_stats(ctx.input, ctx.input_hash);
+            if stats.letters == 0 { false } else { (stats.upper as f32) / (stats.letters as f32) >= *min_ratio }
         }
         Predicate::TokenEntropyAbove { min_bits, min_token_len } => {
             input.split_whitespace().any(|tok| {
@@ -597,22 +603,12 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             min.map_or(true, |m| n >= m as usize) && max.map_or(true, |m| n <= m as usize)
         }
         Predicate::DigitRatioAbove { min_ratio } => {
-            let (mut total, mut digits) = (0u32, 0u32);
-            for c in input.chars() {
-                if c.is_whitespace() { continue; }
-                total += 1;
-                if c.is_ascii_digit() { digits += 1; }
-            }
-            if total == 0 { false } else { (digits as f32) / (total as f32) >= *min_ratio }
+            let stats = char_stats(ctx.input, ctx.input_hash);
+            if stats.non_whitespace == 0 { false } else { (stats.digits as f32) / (stats.non_whitespace as f32) >= *min_ratio }
         }
         Predicate::PunctuationRatioAbove { min_ratio } => {
-            let (mut total, mut punct) = (0u32, 0u32);
-            for c in input.chars() {
-                if c.is_whitespace() { continue; }
-                total += 1;
-                if c.is_ascii_punctuation() { punct += 1; }
-            }
-            if total == 0 { false } else { (punct as f32) / (total as f32) >= *min_ratio }
+            let stats = char_stats(ctx.input, ctx.input_hash);
+            if stats.non_whitespace == 0 { false } else { (stats.punct as f32) / (stats.non_whitespace as f32) >= *min_ratio }
         }
         Predicate::RepeatedCharRun { min_run } => {
             let mut prev: Option<char> = None;
@@ -661,7 +657,7 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
             if total == 0 { return false; }
             (unique.len() as f32 / total as f32) <= *max_ratio
         }
-        Predicate::HasInvisibleChars => input.chars().any(is_invisible_char),
+        Predicate::HasInvisibleChars => char_stats(ctx.input, ctx.input_hash).has_invisible,
         Predicate::HasMixedScriptToken => {
             input.split_whitespace().any(|tok| token_uses_multiple_scripts(tok))
         }
@@ -955,6 +951,33 @@ fn sentence_count(s: &str) -> usize {
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .count()
+}
+
+#[inline]
+fn char_stats(input: &str, input_hash: u64) -> CharStats {
+    let cached = CHAR_STATS_CACHE.with(|cell| cell.borrow().get(&input_hash).copied());
+    if let Some(stats) = cached {
+        return stats;
+    }
+    let mut stats = CharStats { letters: 0, upper: 0, non_whitespace: 0, digits: 0, punct: 0, has_invisible: false };
+    for c in input.chars() {
+        if !c.is_whitespace() {
+            stats.non_whitespace += 1;
+            if c.is_alphabetic() {
+                stats.letters += 1;
+                if c.is_uppercase() { stats.upper += 1; }
+            }
+            if c.is_ascii_digit() { stats.digits += 1; }
+            if c.is_ascii_punctuation() { stats.punct += 1; }
+            if is_invisible_char(c) { stats.has_invisible = true; }
+        }
+    }
+    CHAR_STATS_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        cache.insert(input_hash, stats);
+        if cache.len() > 256 { cache.clear(); }
+    });
+    stats
 }
 
 /// Zero-width and BOM-style invisible characters that appear in homoglyph/
