@@ -168,6 +168,7 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
 /// Zero-copy variant of [`evaluate`]. Returns borrowed strings referencing
 /// the compiled `program`. The caller must ensure `program` outlives the
 /// returned value (true in the typical compile-once-evaluate-many pattern).
+#[inline]
 pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> {
     let ctx = Ctx::new(input);
     let mut triggered: Vec<TriggeredRuleRef<'a>> = Vec::with_capacity(program.rules.len());
