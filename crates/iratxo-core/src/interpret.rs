@@ -184,7 +184,7 @@ impl CachedTriggerResult {
 
 thread_local! {
     /// Combined cache for (input_ptr, input_hash) to avoid re-hashing repeated inputs.
-    static CTX_DATA_CACHE: RefCell<Option<(u64, u64)>> = RefCell::new(None);
+    static CTX_DATA_CACHE: UnsafeCell<Option<(u64, u64)>> = UnsafeCell::new(None);
     static METRICS: RefCell<Option<EvalMetrics>> = RefCell::new(None);
     static METRICS_ENABLED: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// Cross-evaluate cache for entity counts keyed by (input_hash, kind, min_count).
@@ -567,9 +567,8 @@ impl<'a> Ctx<'a> {
 
         // Fast path: if this is the exact same input pointer as last time,
         // reuse the cached hash directly.
-        let cached = CTX_DATA_CACHE.with(|cell| {
-            let c = cell.borrow();
-            c.as_ref().and_then(|(last_ptr, last_hash)| {
+        let cached = CTX_DATA_CACHE.with(|cell| unsafe {
+            (*cell.get()).as_ref().and_then(|(last_ptr, last_hash)| {
                 if *last_ptr == ptr {
                     Some(*last_hash)
                 } else {
@@ -583,8 +582,8 @@ impl<'a> Ctx<'a> {
                 let mut hasher = FxHasher::default();
                 input.hash(&mut hasher);
                 let h = hasher.finish();
-                CTX_DATA_CACHE.with(|cell| {
-                    *cell.borrow_mut() = Some((ptr, h));
+                CTX_DATA_CACHE.with(|cell| unsafe {
+                    *cell.get() = Some((ptr, h));
                 });
                 h
             }
