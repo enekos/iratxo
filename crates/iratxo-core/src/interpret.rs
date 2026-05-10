@@ -49,8 +49,8 @@ thread_local! {
     static LANGUAGE_CACHE: RefCell<FxHashMap<u64, crate::text::Language>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for has_section keyed by (input_hash, titles_hash).
     static SECTION_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
-    /// Cross-evaluate cache for lowercased input keyed by input_hash.
-    static LOWER_CACHE: RefCell<FxHashMap<u64, String>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for lowercased input and token offsets keyed by input_hash.
+    static LOWER_CACHE: RefCell<FxHashMap<u64, (String, Vec<(usize, usize)>)>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -233,6 +233,7 @@ struct Ctx<'a> {
     input: &'a str,
     lower: String,
     input_hash: u64,
+    token_offsets: Vec<(usize, usize)>,
     url_hosts: RefCell<Option<Vec<String>>>,
     lang: RefCell<Option<crate::text::Language>>,
 }
@@ -243,9 +244,9 @@ impl<'a> Ctx<'a> {
         input.hash(&mut hasher);
         let input_hash = hasher.finish();
 
-        let lower = LOWER_CACHE.with(|cell| cell.borrow().get(&input_hash).cloned());
-        let lower = match lower {
-            Some(s) => s,
+        let cached = LOWER_CACHE.with(|cell| cell.borrow().get(&input_hash).cloned());
+        let (lower, token_offsets) = match cached {
+            Some((l, o)) => (l, o),
             None => {
                 let s = if input.is_ascii() {
                     input.to_ascii_lowercase()
@@ -256,12 +257,13 @@ impl<'a> Ctx<'a> {
                     m.lower_allocations += 1;
                     m.lower_bytes += s.len() as u64;
                 });
+                let offsets: Vec<_> = crate::text::tokenize_offsets(&s).collect();
                 LOWER_CACHE.with(|cell| {
                     let mut cache = cell.borrow_mut();
-                    cache.insert(input_hash, s.clone());
+                    cache.insert(input_hash, (s.clone(), offsets.clone()));
                     if cache.len() > 256 { cache.clear(); }
                 });
-                s
+                (s, offsets)
             }
         };
 
@@ -269,6 +271,7 @@ impl<'a> Ctx<'a> {
             input,
             lower,
             input_hash,
+            token_offsets,
             url_hosts: RefCell::new(None),
             lang: RefCell::new(None),
         }
@@ -633,8 +636,9 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         Predicate::RepeatedToken { min_count } => {
             let mut counts: FxHashMap<&str, u32> = FxHashMap::default();
             let mut produced = 0u64;
-            for tok in crate::text::tokenize_iter(ctx.lower()) {
+            for (start, end) in ctx.token_offsets.iter() {
                 produced += 1;
+                let tok = &ctx.lower()[*start..*end];
                 if tok.chars().count() < 2 { continue; }
                 let entry = counts.entry(tok).or_insert(0);
                 *entry += 1;
@@ -649,9 +653,9 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         Predicate::TypeTokenRatioBelow { max_ratio } => {
             let mut total = 0u64;
             let mut unique = rustc_hash::FxHashSet::default();
-            for tok in crate::text::tokenize_iter(ctx.lower()) {
+            for (start, end) in ctx.token_offsets.iter() {
                 total += 1;
-                unique.insert(tok);
+                unique.insert(&ctx.lower()[*start..*end]);
             }
             with_metrics(|m| { m.tokenize_calls += 1; m.tokens_produced += total; });
             if total == 0 { return false; }

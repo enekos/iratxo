@@ -8,6 +8,17 @@ pub fn tokenize_iter(text: &str) -> impl Iterator<Item = &str> + '_ {
         .filter(|s| !s.is_empty())
 }
 
+/// Token iterator that yields byte-offset pairs `(start, end)` instead of
+/// slices. Useful for caching token positions without lifetime issues.
+pub fn tokenize_offsets(text: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(move |s| {
+            let start = s.as_ptr() as usize - text.as_ptr() as usize;
+            (start, start + s.len())
+        })
+}
+
 pub fn tokenize(text: &str) -> Vec<String> {
     tokenize_iter(text)
         .map(|s| s.to_lowercase())
