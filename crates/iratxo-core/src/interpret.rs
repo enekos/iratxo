@@ -63,6 +63,20 @@ thread_local! {
     static SCRIPT_IS_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for token_entropy_above keyed by (input_hash, min_bits_bits, min_token_len).
     static TOKEN_ENTROPY_CACHE: RefCell<FxHashMap<(u64, u32, u32), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for contains_any keyed by (input_hash, needles_hash, case_sensitive).
+    static CONTAINS_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for contains_all keyed by (input_hash, needles_hash, case_sensitive).
+    static CONTAINS_ALL_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for not_contains_any keyed by (input_hash, needles_hash, case_sensitive).
+    static NOT_CONTAINS_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for word_contains_any keyed by (input_hash, needles_hash, case_sensitive).
+    static WORD_CONTAINS_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for starts_with_any keyed by (input_hash, prefixes_hash, case_sensitive).
+    static STARTS_WITH_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for ends_with_any keyed by (input_hash, suffixes_hash, case_sensitive).
+    static ENDS_WITH_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for regex keyed by (input_hash, pattern_hash, case_sensitive).
+    static REGEX_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
@@ -472,16 +486,42 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
     let input = ctx.input;
     let result = match p {
         Predicate::ContainsAny { needles, case_sensitive } => {
-            needles.iter().any(|n| contains_ctx(ctx, n, *case_sensitive))
+            let nh = hash_strings(needles);
+            let key = (ctx.input_hash, nh, *case_sensitive);
+            let cached = CONTAINS_ANY_CACHE.with(|cell| cell.borrow().get(&key).copied());
+            if let Some(r) = cached { return r; }
+            let r = needles.iter().any(|n| contains_ctx(ctx, n, *case_sensitive));
+            CONTAINS_ANY_CACHE.with(|cell| { let mut c = cell.borrow_mut(); c.insert(key, r); if c.len() > 256 { c.clear(); } });
+            r
         }
         Predicate::ContainsAll { needles, case_sensitive } => {
-            needles.iter().all(|n| contains_ctx(ctx, n, *case_sensitive))
+            let nh = hash_strings(needles);
+            let key = (ctx.input_hash, nh, *case_sensitive);
+            let cached = CONTAINS_ALL_CACHE.with(|cell| cell.borrow().get(&key).copied());
+            if let Some(r) = cached { return r; }
+            let r = needles.iter().all(|n| contains_ctx(ctx, n, *case_sensitive));
+            CONTAINS_ALL_CACHE.with(|cell| { let mut c = cell.borrow_mut(); c.insert(key, r); if c.len() > 256 { c.clear(); } });
+            r
         }
         Predicate::NotContainsAny { needles, case_sensitive } => {
-            !needles.iter().any(|n| contains_ctx(ctx, n, *case_sensitive))
+            let nh = hash_strings(needles);
+            let key = (ctx.input_hash, nh, *case_sensitive);
+            let cached = NOT_CONTAINS_ANY_CACHE.with(|cell| cell.borrow().get(&key).copied());
+            if let Some(r) = cached { return r; }
+            let r = !needles.iter().any(|n| contains_ctx(ctx, n, *case_sensitive));
+            NOT_CONTAINS_ANY_CACHE.with(|cell| { let mut c = cell.borrow_mut(); c.insert(key, r); if c.len() > 256 { c.clear(); } });
+            r
         }
         Predicate::Regex { pattern, case_sensitive } => {
-            Ctx::regex(pattern, *case_sensitive).map_or(false, |re| re.is_match(input))
+            let mut phasher = FxHasher::default();
+            phasher.write(pattern.as_bytes());
+            let ph = phasher.finish();
+            let key = (ctx.input_hash, ph, *case_sensitive);
+            let cached = REGEX_CACHE.with(|cell| cell.borrow().get(&key).copied());
+            if let Some(r) = cached { return r; }
+            let r = Ctx::regex(pattern, *case_sensitive).map_or(false, |re| re.is_match(input));
+            REGEX_CACHE.with(|cell| { let mut c = cell.borrow_mut(); c.insert(key, r); if c.len() > 256 { c.clear(); } });
+            r
         }
         Predicate::MinLength { tokens } => counts(input, ctx.input_hash).tokens >= *tokens as usize,
         Predicate::MaxLength { tokens } => counts(input, ctx.input_hash).tokens <= *tokens as usize,
@@ -604,20 +644,38 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
 
         // ---------- v3 heuristics ----------
         Predicate::WordContainsAny { needles, case_sensitive } => {
+            let nh = hash_strings(needles);
+            let key = (ctx.input_hash, nh, *case_sensitive);
+            let cached = WORD_CONTAINS_ANY_CACHE.with(|cell| cell.borrow().get(&key).copied());
+            if let Some(r) = cached { return r; }
             let hay = if *case_sensitive { input } else { ctx.lower() };
-            needles.iter().any(|n| word_contains(hay, n))
+            let r = needles.iter().any(|n| word_contains(hay, n));
+            WORD_CONTAINS_ANY_CACHE.with(|cell| { let mut c = cell.borrow_mut(); c.insert(key, r); if c.len() > 256 { c.clear(); } });
+            r
         }
         Predicate::StartsWithAny { prefixes, case_sensitive } => {
+            let ph = hash_strings(prefixes);
+            let key = (ctx.input_hash, ph, *case_sensitive);
+            let cached = STARTS_WITH_ANY_CACHE.with(|cell| cell.borrow().get(&key).copied());
+            if let Some(r) = cached { return r; }
             let hay = if *case_sensitive { input.trim_start() } else {
                 ctx.lower().trim_start_matches(char::is_whitespace)
             };
-            prefixes.iter().any(|p| hay.starts_with(p.as_str()))
+            let r = prefixes.iter().any(|p| hay.starts_with(p.as_str()));
+            STARTS_WITH_ANY_CACHE.with(|cell| { let mut c = cell.borrow_mut(); c.insert(key, r); if c.len() > 256 { c.clear(); } });
+            r
         }
         Predicate::EndsWithAny { suffixes, case_sensitive } => {
+            let sh = hash_strings(suffixes);
+            let key = (ctx.input_hash, sh, *case_sensitive);
+            let cached = ENDS_WITH_ANY_CACHE.with(|cell| cell.borrow().get(&key).copied());
+            if let Some(r) = cached { return r; }
             let hay = if *case_sensitive { input.trim_end() } else {
                 ctx.lower().trim_end_matches(char::is_whitespace)
             };
-            suffixes.iter().any(|s| hay.ends_with(s.as_str()))
+            let r = suffixes.iter().any(|s| hay.ends_with(s.as_str()));
+            ENDS_WITH_ANY_CACHE.with(|cell| { let mut c = cell.borrow_mut(); c.insert(key, r); if c.len() > 256 { c.clear(); } });
+            r
         }
         Predicate::SentenceCount { min, max } => {
             let n = counts(input, ctx.input_hash).sentences;
@@ -1005,6 +1063,15 @@ fn sentence_count(s: &str) -> usize {
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .count()
+}
+
+#[inline]
+fn hash_strings(list: &[String]) -> u64 {
+    let mut hasher = FxHasher::default();
+    for s in list {
+        hasher.write(s.as_bytes());
+    }
+    hasher.finish()
 }
 
 #[inline]
