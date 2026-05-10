@@ -325,8 +325,6 @@ struct Ctx<'a> {
     lower: String,
     input_hash: u64,
     token_offsets: Vec<(usize, usize)>,
-    url_hosts: RefCell<Option<Vec<String>>>,
-    lang: RefCell<Option<crate::text::Language>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -363,8 +361,6 @@ impl<'a> Ctx<'a> {
             lower,
             input_hash,
             token_offsets,
-            url_hosts: RefCell::new(None),
-            lang: RefCell::new(None),
         }
     }
 
