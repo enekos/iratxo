@@ -1150,6 +1150,10 @@ fn has_section_impl(input: &str, titles: &[String]) -> bool {
         }
     }
     // Cheap HTML heading match: `<h1>Title</h1>` etc.
+    // Fast path: skip if no '<' characters present (no HTML tags).
+    if memchr::memchr(b'<', input.as_bytes()).is_none() {
+        return false;
+    }
     const HTML_OPEN: [&str; 6] = ["<h1", "<h2", "<h3", "<h4", "<h5", "<h6"];
     const HTML_CLOSE: [&str; 6] = ["</h1>", "</h2>", "</h3>", "</h4>", "</h5>", "</h6>"];
     let lower = input.to_lowercase();
