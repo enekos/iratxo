@@ -42,8 +42,10 @@ struct RuleTriggerBits {
     bits: u64,
     // 255 = no winner, otherwise index of winning rule in triggered Vec.
     winner_idx: u8,
-    // Number of rules with explanations (for pre-allocating explanations Vec).
+    // Number of rules with explanations.
     explanation_count: u8,
+    // Indices into triggered Vec for rules with explanations.
+    explanation_indices: [u8; 64],
     // Number of triggered rules and their indices for fast cache-hit iteration.
     triggered_count: u8,
     triggered_indices: [u8; 64],
@@ -56,10 +58,14 @@ impl RuleTriggerBits {
     }
 
     #[inline]
-    fn set_triggered(&mut self, idx: usize) {
+    fn set_triggered(&mut self, idx: usize, rule: &Rule) {
         let bit = 1u64 << idx;
         if self.bits & bit == 0 {
             self.triggered_indices[self.triggered_count as usize] = idx as u8;
+            if rule.verdict.explanation.is_some() {
+                self.explanation_indices[self.explanation_count as usize] = self.triggered_count;
+                self.explanation_count += 1;
+            }
             self.triggered_count += 1;
         }
         self.bits |= bit;
@@ -67,7 +73,10 @@ impl RuleTriggerBits {
 
     #[inline]
     fn new() -> Self {
-        RuleTriggerBits { bits: 0, winner_idx: 255, explanation_count: 0, triggered_count: 0, triggered_indices: [0; 64] }
+        RuleTriggerBits {
+            bits: 0, winner_idx: 255, explanation_count: 0, explanation_indices: [0; 64],
+            triggered_count: 0, triggered_indices: [0; 64],
+        }
     }
 }
 
@@ -112,9 +121,9 @@ impl CachedTriggerResult {
     }
 
     #[inline]
-    fn set_triggered(&mut self, idx: usize) {
+    fn set_triggered(&mut self, idx: usize, rule: &Rule) {
         match self {
-            CachedTriggerResult::Small(bits) => bits.set_triggered(idx),
+            CachedTriggerResult::Small(bits) => bits.set_triggered(idx, rule),
             CachedTriggerResult::Large(vec) => vec.set_triggered(idx),
         }
     }
@@ -395,9 +404,19 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
         let classification = winner.map(|t| t.classification).unwrap_or(&program.default.classify);
         let confidence = winner.map(|t| t.confidence).unwrap_or(program.default.confidence);
         let mut explanations: Vec<&'a str> = Vec::with_capacity(triggers.explanation_count() as usize);
-        for t in &triggered {
-            if let Some(e) = t.explanation {
-                explanations.push(e);
+        match triggers.as_ref() {
+            CachedTriggerResult::Small(bits) => {
+                for i in 0..bits.explanation_count {
+                    let idx = bits.explanation_indices[i as usize] as usize;
+                    explanations.push(triggered[idx].explanation.unwrap());
+                }
+            }
+            CachedTriggerResult::Large(_) => {
+                for t in &triggered {
+                    if let Some(e) = t.explanation {
+                        explanations.push(e);
+                    }
+                }
             }
         }
         return EvalResultRef {
@@ -417,7 +436,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
         if rule.then.is_empty() {
             let triggers = eval_predicate(&rule.when, &ctx);
             if triggers {
-                trigger_bits.set_triggered(i);
+                trigger_bits.set_triggered(i, rule);
                 with_metrics(|m| m.triggered_rules += 1);
                 triggered.push(TriggeredRuleRef {
                     id: rule.id.as_str(),
@@ -431,7 +450,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
             let before = triggered.len();
             eval_rule_ref(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
             if triggered.len() > before {
-                trigger_bits.set_triggered(i);
+                trigger_bits.set_triggered(i, rule);
             }
         }
     }
