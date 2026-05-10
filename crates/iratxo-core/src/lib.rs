@@ -72,6 +72,13 @@ pub fn decode(bytes: &[u8]) -> Result<Program, DecodeError> {
         .iter()
         .flat_map(|r| r.then.iter().cloned())
         .collect();
+    for (i, rule) in program.rules.iter().enumerate() {
+        if program.chained_targets.contains(&rule.id) {
+            if i < 64 {
+                program.chained_target_bits |= 1u64 << i;
+            }
+        }
+    }
     Ok(program)
 }
 #[cfg(test)]

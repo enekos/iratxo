@@ -308,6 +308,14 @@ pub fn parse(src: &str) -> Result<Program, DslError> {
         .iter()
         .flat_map(|r| r.then.iter().cloned())
         .collect();
+    let mut chained_target_bits: u64 = 0;
+    for (i, rule) in rules.iter().enumerate() {
+        if chained_targets.contains(&rule.id) {
+            if i < 64 {
+                chained_target_bits |= 1u64 << i;
+            }
+        }
+    }
 
     Ok(Program {
         name: doc.name,
@@ -315,6 +323,7 @@ pub fn parse(src: &str) -> Result<Program, DslError> {
         rules,
         default,
         chained_targets,
+        chained_target_bits,
     })
 }
 

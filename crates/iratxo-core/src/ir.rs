@@ -11,6 +11,11 @@ pub struct Program {
     /// Skipped during (de)serialization to keep IR format stable.
     #[serde(skip, default)]
     pub chained_targets: Vec<String>,
+    /// Bitset where bit i = 1 means rule i is a target of a `then` chain.
+    /// Allows O(1) bit-test skip during rule iteration.
+    /// u64 supports up to 64 rules; overflow is silently capped.
+    #[serde(skip, default)]
+    pub chained_target_bits: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

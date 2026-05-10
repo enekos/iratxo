@@ -305,7 +305,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
         let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
         let mut triggered_count = 0usize;
         for (i, rule) in program.rules.iter().enumerate() {
-            if program.chained_targets.contains(&rule.id) { continue; }
+            if program.chained_target_bits & (1u64 << i) != 0 { continue; }
             // Rules with then-chains must always be evaluated via eval_rule_ref
             // because the chained rules need to be added too.
             if !rule.then.is_empty() {
@@ -359,7 +359,7 @@ pub fn evaluate_ref<'a>(program: &'a Program, input: &str) -> EvalResultRef<'a> 
     let mut visited: HashSet<&'a str> = HashSet::with_capacity(program.rules.len());
     let mut trigger_bits = CachedTriggerResult::new(program.rules.len());
     for (i, rule) in program.rules.iter().enumerate() {
-        if program.chained_targets.contains(&rule.id) {
+        if program.chained_target_bits & (1u64 << i) != 0 {
             continue;
         }
         if rule.then.is_empty() {
