@@ -211,14 +211,19 @@ thread_local! {
     static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
 }
 
-#[inline]
-fn with_metrics<F: FnOnce(&mut EvalMetrics)>(f: F) {
-    if !METRICS_ENABLED.with(|c| c.get()) { return; }
+#[cold]
+fn with_metrics_cold<F: FnOnce(&mut EvalMetrics)>(f: F) {
     METRICS.with(|cell| {
         if let Some(ref mut m) = *cell.borrow_mut() {
             f(m);
         }
     });
+}
+
+#[inline]
+fn with_metrics<F: FnOnce(&mut EvalMetrics)>(f: F) {
+    if !METRICS_ENABLED.with(|c| c.get()) { return; }
+    with_metrics_cold(f);
 }
 
 /// Evaluate `program` against `input` and return both the result and a
