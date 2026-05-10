@@ -51,6 +51,9 @@ thread_local! {
     static SECTION_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for lowercased input keyed by input_hash.
     static LOWER_CACHE: RefCell<FxHashMap<u64, String>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for semantic input embeddings keyed by
+    /// (input_hash, language, extra_hash).
+    static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
 }
 
 #[inline]
@@ -232,7 +235,6 @@ struct Ctx<'a> {
     input_hash: u64,
     url_hosts: RefCell<Option<Vec<String>>>,
     lang: RefCell<Option<crate::text::Language>>,
-    semantic_embed: RefCell<HashMap<(crate::text::Language, u64), [f32; 256]>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -269,7 +271,6 @@ impl<'a> Ctx<'a> {
             input_hash,
             url_hosts: RefCell::new(None),
             lang: RefCell::new(None),
-            semantic_embed: RefCell::new(HashMap::new()),
         }
     }
 
@@ -297,11 +298,18 @@ impl<'a> Ctx<'a> {
     }
 
     fn semantic_embed(&self, lang: crate::text::Language, extra: Option<&semantic::SynonymIndex>, extra_hash: u64) -> [f32; 256] {
-        let mut cache = self.semantic_embed.borrow_mut();
-        let key = (lang, extra_hash);
-        *cache.entry(key).or_insert_with(|| {
-            semantic::embed_input(self.input, lang, extra)
-        })
+        let key = (self.input_hash, lang, extra_hash);
+        let cached = SEMANTIC_INPUT_CACHE.with(|cell| cell.borrow().get(&key).copied());
+        if let Some(embed) = cached {
+            return embed;
+        }
+        let embed = semantic::embed_input(self.input, lang, extra);
+        SEMANTIC_INPUT_CACHE.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            cache.insert(key, embed);
+            if cache.len() > 256 { cache.clear(); }
+        });
+        embed
     }
 
     fn count_entities(&self, kind: EntityKind, min_count: u32) -> bool {
