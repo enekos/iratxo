@@ -268,7 +268,18 @@ pub fn evaluate_with_metrics(program: &Program, input: &str) -> (EvalResult, Eva
     METRICS.with(|cell| {
         *cell.borrow_mut() = Some(EvalMetrics::default());
     });
-    let result = evaluate(program, input);
+    let r = evaluate_ref(program, input);
+    let result = EvalResult {
+        classification: r.classification.to_string(),
+        confidence: r.confidence,
+        triggered: r.triggered.into_iter().map(|t| TriggeredRule {
+            id: t.id.to_string(),
+            classification: t.classification.to_string(),
+            confidence: t.confidence,
+            explanation: t.explanation.map(|s| s.to_string()),
+        }).collect(),
+        explanations: r.explanations.into_iter().map(|s| s.to_string()).collect(),
+    };
     let metrics = METRICS.with(|cell| cell.borrow_mut().take().unwrap_or_default());
     METRICS_ENABLED.with(|c| c.set(false));
     (result, metrics)
