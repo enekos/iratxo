@@ -7,6 +7,10 @@ pub struct Program {
     pub description: String,
     pub rules: Vec<Rule>,
     pub default: Verdict,
+    /// Pre-computed list of rule ids that are targets of `then` chains.
+    /// Skipped during (de)serialization to keep IR format stable.
+    #[serde(skip, default)]
+    pub chained_targets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

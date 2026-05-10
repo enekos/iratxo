@@ -82,14 +82,8 @@ pub fn evaluate(program: &Program, input: &str) -> EvalResult {
     let ctx = Ctx::new(input);
     let mut triggered: Vec<TriggeredRule> = Vec::new();
     let mut visited: HashSet<&str> = HashSet::new();
-    // Build a set of rule ids that are targets of `then` chains so we can
-    // skip evaluating them independently — they'll be reached via their parent.
-    let chained_targets: HashSet<&str> = program.rules
-        .iter()
-        .flat_map(|r| r.then.iter().map(|s| s.as_str()))
-        .collect();
     for rule in &program.rules {
-        if chained_targets.contains(rule.id.as_str()) { continue; }
+        if program.chained_targets.contains(&rule.id) { continue; }
         eval_rule(rule, &program.rules, &ctx, &mut triggered, &mut visited, 0);
     }
 

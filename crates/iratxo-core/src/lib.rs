@@ -64,5 +64,11 @@ pub fn decode(bytes: &[u8]) -> Result<Program, DecodeError> {
     if &bytes[0..4] != IR_MAGIC { return Err(DecodeError::BadMagic); }
     let version = u16::from_le_bytes([bytes[4], bytes[5]]);
     if version != IR_VERSION { return Err(DecodeError::UnsupportedVersion(version)); }
-    bincode::deserialize(&bytes[6..]).map_err(|e| DecodeError::Bincode(e.to_string()))
+    let mut program: Program = bincode::deserialize(&bytes[6..])
+        .map_err(|e| DecodeError::Bincode(e.to_string()))?;
+    program.chained_targets = program.rules
+        .iter()
+        .flat_map(|r| r.then.iter().cloned())
+        .collect();
+    Ok(program)
 }

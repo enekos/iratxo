@@ -304,11 +304,17 @@ pub fn parse(src: &str) -> Result<Program, DslError> {
         }
     }
 
+    let chained_targets: Vec<String> = rules
+        .iter()
+        .flat_map(|r| r.then.iter().cloned())
+        .collect();
+
     Ok(Program {
         name: doc.name,
         description: doc.description,
         rules,
         default,
+        chained_targets,
     })
 }
 
