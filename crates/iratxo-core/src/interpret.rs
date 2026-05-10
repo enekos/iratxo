@@ -39,7 +39,7 @@ pub struct EvalMetrics {
 /// falls back to Vec<bool> for larger programs.
 #[derive(Clone)]
 struct RuleTriggerBits {
-    bits: u32,
+    bits: u64,
     // 255 = no winner, otherwise index of winning rule in triggered Vec.
     winner_idx: u8,
     // Number of rules with explanations (for pre-allocating explanations Vec).
@@ -49,12 +49,12 @@ struct RuleTriggerBits {
 impl RuleTriggerBits {
     #[inline]
     fn is_triggered(&self, idx: usize) -> bool {
-        self.bits & (1u32 << idx) != 0
+        self.bits & (1u64 << idx) != 0
     }
 
     #[inline]
     fn set_triggered(&mut self, idx: usize) {
-        self.bits |= 1u32 << idx;
+        self.bits |= 1u64 << idx;
     }
 
     #[inline]
@@ -145,7 +145,7 @@ impl CachedTriggerResult {
 
     #[inline]
     fn new(len: usize) -> Self {
-        if len <= 32 {
+        if len <= 64 {
             CachedTriggerResult::Small(RuleTriggerBits::new())
         } else {
             CachedTriggerResult::Large(RuleTriggerVec::new(len))
