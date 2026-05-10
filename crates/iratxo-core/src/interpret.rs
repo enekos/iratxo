@@ -49,6 +49,8 @@ thread_local! {
     static LANGUAGE_CACHE: RefCell<FxHashMap<u64, crate::text::Language>> = RefCell::new(FxHashMap::default());
     /// Cross-evaluate cache for has_section keyed by (input_hash, titles_hash).
     static SECTION_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
+    /// Cross-evaluate cache for lowercased input keyed by input_hash.
+    static LOWER_CACHE: RefCell<FxHashMap<u64, String>> = RefCell::new(FxHashMap::default());
 }
 
 #[inline]
@@ -235,18 +237,32 @@ struct Ctx<'a> {
 
 impl<'a> Ctx<'a> {
     fn new(input: &'a str) -> Self {
-        let lower = if input.is_ascii() {
-            input.to_ascii_lowercase()
-        } else {
-            input.to_lowercase()
-        };
-        with_metrics(|m| {
-            m.lower_allocations += 1;
-            m.lower_bytes += lower.len() as u64;
-        });
         let mut hasher = FxHasher::default();
         input.hash(&mut hasher);
         let input_hash = hasher.finish();
+
+        let lower = LOWER_CACHE.with(|cell| cell.borrow().get(&input_hash).cloned());
+        let lower = match lower {
+            Some(s) => s,
+            None => {
+                let s = if input.is_ascii() {
+                    input.to_ascii_lowercase()
+                } else {
+                    input.to_lowercase()
+                };
+                with_metrics(|m| {
+                    m.lower_allocations += 1;
+                    m.lower_bytes += s.len() as u64;
+                });
+                LOWER_CACHE.with(|cell| {
+                    let mut cache = cell.borrow_mut();
+                    cache.insert(input_hash, s.clone());
+                    if cache.len() > 256 { cache.clear(); }
+                });
+                s
+            }
+        };
+
         Ctx {
             input,
             lower,
