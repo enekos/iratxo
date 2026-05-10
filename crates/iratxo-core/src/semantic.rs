@@ -96,11 +96,17 @@ pub fn embed_input(text: &str, lang: Language, extra: Option<&SynonymIndex>) -> 
     with_builtin(lang, |builtin| embed(text, lang, extra, builtin))
 }
 
-fn canonicalize_stem(stem: &str, extra: Option<&SynonymIndex>, builtin: &SynonymIndex) -> String {
+/// Same as [`embed_input`] but assumes `text` is already lowercased.
+/// Skips the per-token `to_lowercase()` allocation.
+pub fn embed_input_lowered(text: &str, lang: Language, extra: Option<&SynonymIndex>) -> [f32; DIM] {
+    with_builtin(lang, |builtin| embed_lowered(text, lang, extra, builtin))
+}
+
+fn canonicalize_stem<'a>(stem: &'a str, extra: Option<&'a SynonymIndex>, builtin: &'a SynonymIndex) -> &'a str {
     if let Some(idx) = extra {
-        if let Some(c) = idx.map.get(stem) { return c.clone(); }
+        if let Some(c) = idx.map.get(stem) { return c.as_str(); }
     }
-    builtin.map.get(stem).cloned().unwrap_or_else(|| stem.to_string())
+    builtin.map.get(stem).map(|s| s.as_str()).unwrap_or(stem)
 }
 
 fn embed(text: &str, lang: Language, extra: Option<&SynonymIndex>, builtin: &SynonymIndex) -> [f32; DIM] {
@@ -109,6 +115,21 @@ fn embed(text: &str, lang: Language, extra: Option<&SynonymIndex>, builtin: &Syn
         let lower = tok.to_lowercase();
         if is_stopword(&lower, lang) { continue; }
         let stemmed = stem(&lower, lang);
+        if stemmed.chars().count() < 2 { continue; }
+        let canonical = canonicalize_stem(&stemmed, extra, builtin);
+        let h = fnv1a64(canonical.as_bytes());
+        let bucket = (h as usize) % DIM;
+        let sign = if (h >> 32) & 1 == 0 { 1.0 } else { -1.0 };
+        v[bucket] += sign;
+    }
+    v
+}
+
+fn embed_lowered(text: &str, lang: Language, extra: Option<&SynonymIndex>, builtin: &SynonymIndex) -> [f32; DIM] {
+    let mut v = [0f32; DIM];
+    for tok in tokenize_iter(text) {
+        if is_stopword(tok, lang) { continue; }
+        let stemmed = stem(tok, lang);
         if stemmed.chars().count() < 2 { continue; }
         let canonical = canonicalize_stem(&stemmed, extra, builtin);
         let h = fnv1a64(canonical.as_bytes());

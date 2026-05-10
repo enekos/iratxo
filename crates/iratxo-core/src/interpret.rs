@@ -661,7 +661,8 @@ impl<'a> Ctx<'a> {
         if let Some(embed) = cached {
             return embed;
         }
-        let embed = semantic::embed_input(self.input, lang, extra);
+        // Use pre-lowered input to avoid per-token to_lowercase() allocation.
+        let embed = semantic::embed_input_lowered(self.lower(), lang, extra);
         SEMANTIC_INPUT_CACHE.with(|cell| {
             let mut cache = cell.borrow_mut();
             cache.insert(key, embed);
