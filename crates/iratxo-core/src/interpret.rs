@@ -974,28 +974,35 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
 
             with_metrics(|m| m.semantic_similarity_calls += data.examples.len() as u64);
             let input_embed = ctx.semantic_embed(lang, extra_idx, hash);
-            data.examples.iter().any(|ex| {
-                let mut hasher = FxHasher::default();
-                ex.as_bytes().hash(&mut hasher);
-                let ex_hash = hasher.finish();
-                let key = (ex_hash, lang, hash);
-                let cached = SEMANTIC_EXAMPLE_CACHE.with(|cell| cell.borrow().get(&key).copied());
-                let ex_embed = match cached {
-                    Some(e) => e,
-                    None => {
-                        let e = semantic::embed_input(ex, lang, extra_idx);
-                        SEMANTIC_EXAMPLE_CACHE.with(|cell| {
-                            let mut cache = cell.borrow_mut();
-                            cache.insert(key, e);
-                            if cache.len() > 256 {
-                                cache.clear();
-                            }
-                        });
-                        e
-                    }
-                };
-                semantic::cosine(&input_embed, &ex_embed) >= data.threshold
-            })
+
+            if !data.precomputed_embeddings.is_empty() {
+                data.precomputed_embeddings.iter().any(|ex_embed| {
+                    semantic::cosine(&input_embed, ex_embed) >= data.threshold
+                })
+            } else {
+                data.examples.iter().any(|ex| {
+                    let mut hasher = FxHasher::default();
+                    ex.as_bytes().hash(&mut hasher);
+                    let ex_hash = hasher.finish();
+                    let key = (ex_hash, lang, hash);
+                    let cached = SEMANTIC_EXAMPLE_CACHE.with(|cell| cell.borrow().get(&key).copied());
+                    let ex_embed = match cached {
+                        Some(e) => e,
+                        None => {
+                            let e = semantic::embed_input(ex, lang, extra_idx);
+                            SEMANTIC_EXAMPLE_CACHE.with(|cell| {
+                                let mut cache = cell.borrow_mut();
+                                cache.insert(key, e);
+                                if cache.len() > 256 {
+                                    cache.clear();
+                                }
+                            });
+                            e
+                        }
+                    };
+                    semantic::cosine(&input_embed, &ex_embed) >= data.threshold
+                })
+            }
         }
 
         // ---------- v3 heuristics ----------

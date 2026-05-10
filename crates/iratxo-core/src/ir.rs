@@ -173,6 +173,10 @@ pub struct SemanticMatchData {
     pub threshold: f32,
     pub extra_synonyms: Vec<(String, Vec<String>)>,
     pub language: Option<String>,
+    /// Pre-computed embeddings for each example, keyed by language code.
+    /// Only populated when `language` is specified at compile time.
+    #[serde(skip)]
+    pub precomputed_embeddings: Vec<[f32; 256]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

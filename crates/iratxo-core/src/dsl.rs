@@ -566,9 +566,27 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
         if !(0.0..=1.0).contains(&s.threshold) {
             return Err(DslError::Validation(format!("semantic_match threshold must be in [0,1], got {}", s.threshold)));
         }
-        let extra = s.synonyms.into_iter().collect();
+        let extra: Vec<(String, Vec<String>)> = s.synonyms.into_iter().collect();
+        let mut precomputed = Vec::new();
         if let Some(ref code) = s.language {
-            if crate::text::Language::from_code(code).is_none() {
+            if let Some(lang) = crate::text::Language::from_code(code) {
+                let extra_idx = if extra.is_empty() {
+                    None
+                } else {
+                    let mut json = String::from("{");
+                    for (i, (canonical, syns)) in extra.iter().enumerate() {
+                        if i > 0 { json.push(','); }
+                        json.push_str(&format!("{}:{}",
+                            serde_json::to_string(canonical).unwrap(),
+                            serde_json::to_string(syns).unwrap()));
+                    }
+                    json.push('}');
+                    Some(crate::semantic::SynonymIndex::from_json_for(&json, lang))
+                };
+                for ex in &s.examples {
+                    precomputed.push(crate::semantic::embed_input(ex, lang, extra_idx.as_ref()));
+                }
+            } else {
                 return Err(DslError::Validation(format!("unsupported language: {} (use en|es|ca|eu)", code)));
             }
         }
@@ -577,6 +595,7 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
             threshold: s.threshold,
             extra_synonyms: extra,
             language: s.language,
+            precomputed_embeddings: precomputed,
         })));
     }
 
