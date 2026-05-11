@@ -679,7 +679,12 @@ impl<'a> Ctx<'a> {
             return count >= min_count as usize;
         }
         with_metrics(|m| m.entity_detection_calls += 1);
-        let count = count_entities_impl(self.input, kind, min_count);
+        // Avoid double URL scanning: url_hosts is already cached separately.
+        let count = if kind == EntityKind::Url {
+            self.url_hosts().len()
+        } else {
+            count_entities_impl(self.input, kind, min_count)
+        };
         ENTITY_COUNT_CACHE.with(|cell| {
             let mut cache = cell.borrow_mut();
             cache.insert(key, count);
