@@ -1328,9 +1328,10 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
             regex_count_early(re, input, min_count)
         }
         EntityKind::Url      => {
-            let re = URL.get_or_init(|| Regex::new(r"(?i)\bhttps?://[a-z0-9.\-]+(?:/[^\s]*)?").unwrap());
-            if need_one { return re.is_match(input) as usize; }
-            regex_count_early(re, input, min_count)
+            // Fast path: use memchr-based url_hosts_impl instead of regex.
+            let count = url_hosts_impl(input).len();
+            if need_one { return (count > 0) as usize; }
+            count
         }
         EntityKind::Currency => {
             let re = CURR.get_or_init(|| Regex::new(r"(?:[\$£€¥]\s?\d{1,3}(?:[,.]\d{3})*(?:\.\d+)?|\b\d+(?:[.,]\d+)?\s?(?:USD|EUR|GBP|JPY)\b)").unwrap());
