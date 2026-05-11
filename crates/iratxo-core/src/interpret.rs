@@ -1055,10 +1055,13 @@ fn eval_predicate(p: &Predicate, ctx: &Ctx) -> bool {
         Predicate::RepeatedToken { min_count } => {
             let mut counts: FxHashMap<&str, u32> = FxHashMap::default();
             let mut produced = 0u64;
+            let lower = ctx.lower();
             for (start, end) in ctx.token_offsets().iter() {
                 produced += 1;
-                let tok = &ctx.lower()[*start..*end];
-                if tok.chars().count() < 2 { continue; }
+                let tok = &lower[*start..*end];
+                // Fast path for ASCII: len() is much faster than chars().count().
+                let len = if tok.is_ascii() { tok.len() } else { tok.chars().count() };
+                if len < 2 { continue; }
                 let entry = counts.entry(tok).or_insert(0);
                 *entry += 1;
                 if *entry >= *min_count {
