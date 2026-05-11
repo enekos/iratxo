@@ -4,7 +4,7 @@
 //! Catalan `l·l` and trailing `-ció`) plus per-language closed word lists.
 //! Tie-breaks favor English.
 
-use crate::text::tokenize::tokenize;
+use crate::text::tokenize::tokenize_iter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Language {
@@ -41,7 +41,12 @@ impl Language {
 }
 
 pub fn detect_language(text: &str) -> Language {
-    let lower = text.to_lowercase();
+    detect_language_lowered(&text.to_lowercase())
+}
+
+/// Same as [`detect_language`] but assumes `lower` is already lowercased.
+/// Avoids the `to_lowercase()` allocation when the caller already has it.
+pub fn detect_language_lowered(lower: &str) -> Language {
     let mut s_en = 0i32;
     let mut s_es = 0i32;
     let mut s_ca = 0i32;
@@ -63,11 +68,12 @@ pub fn detect_language(text: &str) -> Language {
     if lower.contains("tz") { s_eu += 3; }
     if lower.contains("ció") { s_ca += 2; }
 
-    for tok in tokenize(&lower) {
-        if EN_DETECT.binary_search(&tok.as_str()).is_ok() { s_en += 2; }
-        if ES_DETECT.binary_search(&tok.as_str()).is_ok() { s_es += 2; }
-        if CA_DETECT.binary_search(&tok.as_str()).is_ok() { s_ca += 2; }
-        if EU_DETECT.binary_search(&tok.as_str()).is_ok() { s_eu += 2; }
+    // Use tokenize_iter to avoid allocating a String per token.
+    for tok in tokenize_iter(lower) {
+        if EN_DETECT.binary_search(&tok).is_ok() { s_en += 2; }
+        if ES_DETECT.binary_search(&tok).is_ok() { s_es += 2; }
+        if CA_DETECT.binary_search(&tok).is_ok() { s_ca += 2; }
+        if EU_DETECT.binary_search(&tok).is_ok() { s_eu += 2; }
     }
 
     let mut best = (s_en, Language::English);

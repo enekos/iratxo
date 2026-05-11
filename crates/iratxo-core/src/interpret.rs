@@ -646,7 +646,8 @@ impl<'a> Ctx<'a> {
             return lang;
         }
         with_metrics(|m| m.language_detect_calls += 1);
-        let lang = crate::text::detect_language(self.input);
+        // Use pre-lowered input to avoid double lowercasing.
+        let lang = crate::text::detect_language_lowered(self.lower());
         LANGUAGE_CACHE.with(|cell| {
             let mut cache = cell.borrow_mut();
             cache.insert(self.input_hash, lang);
