@@ -260,7 +260,7 @@ fn predicate_summary(p: &iratxo_core::Predicate) -> String {
         P::Regex { .. }                   => "regex".into(),
         P::MinLength { tokens }           => format!("min_length({})", tokens),
         P::MaxLength { tokens }           => format!("max_length({})", tokens),
-        P::SemanticMatch { examples, .. } => format!("semantic_match({})", examples.len()),
+        P::SemanticMatch(data) => format!("semantic_match({})", data.examples.len()),
         P::HasSection { titles }          => format!("has_section({})", titles.len()),
         P::HasEntity { kind, min_count }  => format!("has_entity({:?},{})", kind, min_count),
         P::ParagraphCount { .. }          => "paragraphs".into(),

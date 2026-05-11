@@ -1354,16 +1354,8 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
             count
         }
         EntityKind::CreditCard => {
-            let re = CARD.get_or_init(|| ascii_regex(r"\b(?:\d[ -]?){13,19}\b"));
-            if need_one { return re.find(input).map_or(0, |m| luhn_check(m.as_str()) as usize); }
-            let mut count = 0usize;
-            for m in re.find_iter(input) {
-                if luhn_check(m.as_str()) {
-                    count += 1;
-                    if count >= min_count as usize { break; }
-                }
-            }
-            count
+            if need_one { return has_credit_card_fast(input) as usize; }
+            count_credit_cards(input, min_count)
         }
         EntityKind::Iban => {
             let re = IBAN.get_or_init(|| ascii_regex_caseless(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b"));
@@ -1643,6 +1635,77 @@ fn token_uses_multiple_scripts(tok: &str) -> bool {
         }
     }
     false
+}
+
+/// Fast credit-card detection: scan for runs of 13–19 digits (allowing
+/// spaces and hyphens), validate with Luhn. Short-circuits on first hit.
+#[inline]
+fn has_credit_card_fast(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        // Find start of a digit sequence
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut digit_count = 0usize;
+        let mut j = i;
+        while j < bytes.len() {
+            let b = bytes[j];
+            if b.is_ascii_digit() {
+                digit_count += 1;
+                if digit_count > 19 { break; }
+                j += 1;
+            } else if b == b' ' || b == b'-' {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        if digit_count >= 13 && luhn_check(&input[start..j]) {
+            return true;
+        }
+        i = j + 1;
+    }
+    false
+}
+
+/// Count credit-card numbers up to `limit`. Uses the same scanner as
+/// `has_credit_card_fast` but does not short-circuit.
+#[inline]
+fn count_credit_cards(input: &str, limit: u32) -> usize {
+    let bytes = input.as_bytes();
+    let mut i = 0usize;
+    let mut count = 0usize;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut digit_count = 0usize;
+        let mut j = i;
+        while j < bytes.len() {
+            let b = bytes[j];
+            if b.is_ascii_digit() {
+                digit_count += 1;
+                if digit_count > 19 { break; }
+                j += 1;
+            } else if b == b' ' || b == b'-' {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        if digit_count >= 13 && luhn_check(&input[start..j]) {
+            count += 1;
+            if count >= limit as usize { break; }
+        }
+        i = j + 1;
+    }
+    count
 }
 
 /// Fast email detection using memchr to find '@' characters, then manual
