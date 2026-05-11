@@ -717,7 +717,8 @@ impl<'a> Ctx<'a> {
             return result;
         }
         with_metrics(|m| m.section_scan_calls += 1);
-        let result = has_section_impl(self.input, titles);
+        // Use pre-lowered input to avoid redundant to_lowercase() calls.
+        let result = has_section_impl(self.lower(), titles);
         SECTION_CACHE.with(|cell| {
             let mut cache = cell.borrow_mut();
             cache.insert(key, result);
@@ -1139,38 +1140,38 @@ fn max_words_per_sentence(s: &str) -> usize {
 }
 
 /// Recognises markdown `#`-style headings and `<h1>..<h6>` HTML headings.
-/// Title comparison is case-insensitive and trims whitespace.
-/// Titles are expected to be pre-trimmed and pre-lowercased at compile time.
+/// `lower_input` must already be lowercased. Title comparison is
+/// case-insensitive and trims whitespace. Titles are expected to be
+/// pre-trimmed and pre-lowercased at compile time.
 #[inline]
-fn has_section_impl(input: &str, titles: &[String]) -> bool {
-    for line in input.lines() {
+fn has_section_impl(lower_input: &str, titles: &[String]) -> bool {
+    for line in lower_input.lines() {
         let trimmed = line.trim_start();
         if trimmed.starts_with('#') {
             // Strip leading '#' chars and a single space.
-            let title = trimmed.trim_start_matches('#').trim().to_lowercase();
+            let title = trimmed.trim_start_matches('#').trim();
             if titles.iter().any(|w| *w == title) { return true; }
         }
     }
     // Cheap HTML heading match: `<h1>Title</h1>` etc.
     // Fast path: skip if no '<' characters present (no HTML tags).
-    if memchr::memchr(b'<', input.as_bytes()).is_none() {
+    if memchr::memchr(b'<', lower_input.as_bytes()).is_none() {
         return false;
     }
     const HTML_OPEN: [&str; 6] = ["<h1", "<h2", "<h3", "<h4", "<h5", "<h6"];
     const HTML_CLOSE: [&str; 6] = ["</h1>", "</h2>", "</h3>", "</h4>", "</h5>", "</h6>"];
-    let lower = input.to_lowercase();
     for level in 1..=6 {
         let open = HTML_OPEN[level - 1];
         let close = HTML_CLOSE[level - 1];
         let mut start = 0usize;
-        while let Some(idx) = lower[start..].find(open) {
+        while let Some(idx) = lower_input[start..].find(open) {
             let abs = start + idx;
             // Skip past the '>' that closes the opening tag.
-            let after_open = &lower[abs..];
+            let after_open = &lower_input[abs..];
             if let Some(gt) = after_open.find('>') {
                 let body_start = abs + gt + 1;
-                if let Some(end_idx) = lower[body_start..].find(close) {
-                    let body = &lower[body_start..body_start + end_idx];
+                if let Some(end_idx) = lower_input[body_start..].find(close) {
+                    let body = &lower_input[body_start..body_start + end_idx];
                     let body_clean = strip_html_tags(body);
                     let body_trimmed = body_clean.trim();
                     if titles.iter().any(|w| *w == body_trimmed) { return true; }
