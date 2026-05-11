@@ -127,10 +127,17 @@ fn embed(text: &str, lang: Language, extra: Option<&SynonymIndex>, builtin: &Syn
     v
 }
 
+/// Longest stopword across all supported languages is 10 chars (English
+/// "yourselves" / "themselves"). Using 12 as a safe upper bound lets us
+/// skip the binary-search stopword check for the majority of tokens in
+/// long documents.
+const MAX_STOPWORD_LEN: usize = 12;
+
 fn embed_lowered(text: &str, lang: Language, extra: Option<&SynonymIndex>, builtin: &SynonymIndex) -> [f32; DIM] {
     let mut v = [0f32; DIM];
     for tok in tokenize_iter(text) {
-        if is_stopword(tok, lang) { continue; }
+        // Fast path: long tokens are never stopwords, skip binary search.
+        if tok.len() <= MAX_STOPWORD_LEN && is_stopword(tok, lang) { continue; }
         let stemmed = stem_cow(tok, lang);
         // Fast path for ASCII: len() is much faster than chars().count().
         let len = if stemmed.is_ascii() { stemmed.len() } else { stemmed.chars().count() };
