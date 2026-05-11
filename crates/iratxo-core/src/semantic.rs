@@ -9,6 +9,7 @@
 //! X" matches, not for syntactic reasoning.
 
 use crate::text::{detect_language, is_stopword, stem, stem_cow, tokenize_iter, Language};
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -32,7 +33,7 @@ fn builtin_source(lang: Language) -> &'static str {
 thread_local! {
     /// Per-language cache of the built-in dictionary. Each entry maps
     /// stem(synonym) -> stem(canonical). Built lazily on first use.
-    static BUILTIN_BY_LANG: RefCell<HashMap<Language, SynonymIndex>> = RefCell::new(HashMap::new());
+    static BUILTIN_BY_LANG: RefCell<FxHashMap<Language, SynonymIndex>> = RefCell::new(FxHashMap::default());
 }
 
 fn with_builtin<R>(lang: Language, f: impl FnOnce(&SynonymIndex) -> R) -> R {
@@ -48,7 +49,7 @@ fn with_builtin<R>(lang: Language, f: impl FnOnce(&SynonymIndex) -> R) -> R {
 /// Synonyms collapsed to canonical form, with both keys and values pre-stemmed
 /// for the chosen language so lookups can use stems directly.
 pub struct SynonymIndex {
-    map: HashMap<String, String>,
+    map: FxHashMap<String, String>,
 }
 
 impl SynonymIndex {
@@ -56,7 +57,7 @@ impl SynonymIndex {
     /// stemmed using `lang`'s stemmer.
     pub fn from_json_for(src: &str, lang: Language) -> Self {
         let raw: HashMap<String, serde_json::Value> = serde_json::from_str(src).unwrap_or_default();
-        let mut map = HashMap::new();
+        let mut map = FxHashMap::default();
         for (canonical, value) in raw {
             if canonical.starts_with('_') { continue; }
             let cstem = stem(&canonical, lang);
@@ -131,7 +132,9 @@ fn embed_lowered(text: &str, lang: Language, extra: Option<&SynonymIndex>, built
     for tok in tokenize_iter(text) {
         if is_stopword(tok, lang) { continue; }
         let stemmed = stem_cow(tok, lang);
-        if stemmed.chars().count() < 2 { continue; }
+        // Fast path for ASCII: len() is much faster than chars().count().
+        let len = if stemmed.is_ascii() { stemmed.len() } else { stemmed.chars().count() };
+        if len < 2 { continue; }
         let canonical = canonicalize_stem(&*stemmed, extra, builtin);
         let h = fnv1a64(canonical.as_bytes());
         let bucket = (h as usize) % DIM;
