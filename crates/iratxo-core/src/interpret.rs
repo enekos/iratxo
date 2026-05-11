@@ -1358,23 +1358,22 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
             count_credit_cards(input, min_count)
         }
         EntityKind::Iban => {
+            if need_one { return has_iban_fast(input) as usize; }
             let re = IBAN.get_or_init(|| ascii_regex_caseless(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b"));
-            if need_one { return re.is_match(input) as usize; }
             regex_count_early(re, input, min_count)
         }
         EntityKind::DateIso  => {
+            if need_one { return has_date_iso_fast(input) as usize; }
             let re = DATE.get_or_init(|| ascii_regex(r"\b\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])\b"));
-            if need_one { return re.is_match(input) as usize; }
             regex_count_early(re, input, min_count)
         }
         EntityKind::Hashtag  => {
-            let re = HASHTAG.get_or_init(|| Regex::new(r"(?:^|[\s(\[{,;:])#[A-Za-z][\w]{0,49}").unwrap());
-            if need_one { return re.is_match(input) as usize; }
-            regex_count_early(re, input, min_count)
+            if need_one { return has_hashtag_fast(input) as usize; }
+            count_hashtags(input, min_count)
         }
         EntityKind::Mention  => {
+            if need_one { return has_mention_fast(input) as usize; }
             let re = MENTION.get_or_init(|| Regex::new(r"(?:^|[\s(\[{,;:])@[A-Za-z0-9_][\w.\-]{0,49}").unwrap());
-            if need_one { return re.is_match(input) as usize; }
             regex_count_early(re, input, min_count)
         }
         EntityKind::Emoji    => {
@@ -1632,6 +1631,216 @@ fn token_uses_multiple_scripts(tok: &str) -> bool {
                 Some(prev) if prev != s => return true,
                 _ => {}
             }
+        }
+    }
+    false
+}
+
+/// Fast IBAN detection: scan for 2 letters + 2 digits + 10–30 alphanumerics.
+/// Short-circuits on first hit.
+#[inline]
+fn has_iban_fast(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    let mut i = 0usize;
+    while i + 14 <= bytes.len() {
+        // Look for two ASCII letters
+        if !bytes[i].is_ascii_alphabetic() || !bytes[i + 1].is_ascii_alphabetic() {
+            i += 1;
+            continue;
+        }
+        // Followed by two digits
+        if !bytes[i + 2].is_ascii_digit() || !bytes[i + 3].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        // Count trailing alphanumeric characters
+        let mut j = i + 4;
+        while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
+            j += 1;
+        }
+        let total_len = j - i;
+        if total_len >= 14 && total_len <= 34 {
+            // Word boundary check: before must not be alphanumeric
+            if i > 0 && bytes[i - 1].is_ascii_alphanumeric() {
+                i = j;
+                continue;
+            }
+            // After must not be alphanumeric
+            if j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
+                i = j;
+                continue;
+            }
+            return true;
+        }
+        i = j.max(i + 1);
+    }
+    false
+}
+
+/// Fast ISO date detection: scan for YYYY-MM-DD pattern.
+/// Does strict month/day range validation.
+#[inline]
+fn has_date_iso_fast(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    let mut i = 0usize;
+    while i + 10 <= bytes.len() {
+        // YYYY
+        if !bytes[i].is_ascii_digit()
+            || !bytes[i + 1].is_ascii_digit()
+            || !bytes[i + 2].is_ascii_digit()
+            || !bytes[i + 3].is_ascii_digit()
+        {
+            i += 1;
+            continue;
+        }
+        if bytes[i + 4] != b'-' {
+            i += 1;
+            continue;
+        }
+        // MM
+        let m1 = bytes[i + 5];
+        let m2 = bytes[i + 6];
+        if !m1.is_ascii_digit() || !m2.is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let month = (m1 - b'0') * 10 + (m2 - b'0');
+        if month < 1 || month > 12 {
+            i += 1;
+            continue;
+        }
+        if bytes[i + 7] != b'-' {
+            i += 1;
+            continue;
+        }
+        // DD
+        let d1 = bytes[i + 8];
+        let d2 = bytes[i + 9];
+        if !d1.is_ascii_digit() || !d2.is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let day = (d1 - b'0') * 10 + (d2 - b'0');
+        if day < 1 || day > 31 {
+            i += 1;
+            continue;
+        }
+        // Rough month/day check (doesn't handle leap years or 30-day months)
+        if day > 30 && (month == 4 || month == 6 || month == 9 || month == 11) {
+            i += 1;
+            continue;
+        }
+        if day > 29 && month == 2 {
+            i += 1;
+            continue;
+        }
+        // Word boundary checks
+        if i > 0 && bytes[i - 1].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        if i + 10 < bytes.len() && bytes[i + 10].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+/// Fast hashtag detection: scan for '#' preceded by whitespace or start.
+/// Short-circuits on first hit.
+#[inline]
+fn has_hashtag_fast(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'#' { continue; }
+        // Must be preceded by whitespace or start of string
+        if i > 0 {
+            let prev = bytes[i - 1];
+            if prev.is_ascii_alphanumeric() || prev == b'_' {
+                continue;
+            }
+        }
+        // Must be followed by a letter
+        if i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphabetic() {
+            continue;
+        }
+        // Followed by up to 49 word chars
+        let mut j = i + 2;
+        while j < bytes.len()
+            && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+        {
+            j += 1;
+        }
+        if j - i - 1 <= 50 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Count hashtags up to `limit`.
+#[inline]
+fn count_hashtags(input: &str, limit: u32) -> usize {
+    let bytes = input.as_bytes();
+    let mut count = 0usize;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'#' { continue; }
+        if i > 0 {
+            let prev = bytes[i - 1];
+            if prev.is_ascii_alphanumeric() || prev == b'_' {
+                continue;
+            }
+        }
+        if i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphabetic() {
+            continue;
+        }
+        let mut j = i + 2;
+        while j < bytes.len()
+            && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+        {
+            j += 1;
+        }
+        if j - i - 1 <= 50 {
+            count += 1;
+            if count >= limit as usize { break; }
+        }
+    }
+    count
+}
+
+/// Fast mention detection: scan for '@' preceded by whitespace or start.
+/// Short-circuits on first hit.
+#[inline]
+fn has_mention_fast(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'@' { continue; }
+        if i > 0 {
+            let prev = bytes[i - 1];
+            if prev.is_ascii_alphanumeric() || prev == b'_' {
+                continue;
+            }
+        }
+        // Must be followed by alphanumeric or underscore
+        if i + 1 >= bytes.len()
+            || !(bytes[i + 1].is_ascii_alphanumeric() || bytes[i + 1] == b'_')
+        {
+            continue;
+        }
+        // Followed by up to 49 word chars / dots / hyphens
+        let mut j = i + 2;
+        while j < bytes.len()
+            && (bytes[j].is_ascii_alphanumeric()
+                || bytes[j] == b'_'
+                || bytes[j] == b'.'
+                || bytes[j] == b'-')
+        {
+            j += 1;
+        }
+        if j - i - 1 <= 50 {
+            return true;
         }
     }
     false
