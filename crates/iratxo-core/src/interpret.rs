@@ -1529,6 +1529,7 @@ fn counts_impl(input: &str) -> Counts {
         if matches!(c, '.' | '!' | '?') {
             if in_sent {
                 if in_word {
+                    tokens += 1;
                     sent_word_count += 1;
                     in_word = false;
                 }
@@ -1541,6 +1542,7 @@ fn counts_impl(input: &str) -> Counts {
             }
         } else if c.is_whitespace() {
             if in_word {
+                tokens += 1;
                 sent_word_count += 1;
                 in_word = false;
             }
