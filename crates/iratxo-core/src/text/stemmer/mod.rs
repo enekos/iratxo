@@ -11,6 +11,7 @@ mod snowball_word;
 
 use crate::text::lang::Language;
 use rust_stemmers::{Algorithm, Stemmer};
+use std::borrow::Cow;
 use std::sync::OnceLock;
 
 static EN_STEMMER: OnceLock<Stemmer> = OnceLock::new();
@@ -23,6 +24,18 @@ pub fn stem(word: &str, lang: Language) -> String {
         Language::Spanish => ES_STEMMER.get_or_init(|| Stemmer::create(Algorithm::Spanish)).stem(word).into_owned(),
         Language::Catalan => catalan::stem(word),
         Language::Basque  => basque::stem(word),
+    }
+}
+
+/// Same as [`stem`] but returns `Cow<str>` to avoid allocation when the
+/// stemmer returns the input unchanged (common for short/irregular words).
+pub fn stem_cow(word: &str, lang: Language) -> Cow<'_, str> {
+    if word.is_empty() { return Cow::Borrowed(""); }
+    match lang {
+        Language::English => EN_STEMMER.get_or_init(|| Stemmer::create(Algorithm::English)).stem(word),
+        Language::Spanish => ES_STEMMER.get_or_init(|| Stemmer::create(Algorithm::Spanish)).stem(word),
+        Language::Catalan => Cow::Owned(catalan::stem(word)),
+        Language::Basque  => Cow::Owned(basque::stem(word)),
     }
 }
 
