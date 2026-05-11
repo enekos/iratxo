@@ -1392,12 +1392,29 @@ fn count_entities_impl(input: &str, kind: EntityKind, min_count: u32) -> usize {
     }
 }
 
+/// Fast word-boundary substring search. For ASCII haystacks the boundary
+/// check is a single alphanumeric/underscore test; for Unicode we also
+/// guard against matching inside a multi-byte UTF-8 sequence.
 #[inline]
 fn word_contains(hay: &str, needle: &str) -> bool {
     if needle.is_empty() { return true; }
-    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     let hay_bytes = hay.as_bytes();
     let needle_bytes = needle.as_bytes();
+    if hay.is_ascii() && needle.is_ascii() {
+        for abs_pos in memchr::memmem::find_iter(hay_bytes, needle_bytes) {
+            let left_ok = abs_pos == 0 || {
+                let prev = hay_bytes[abs_pos - 1];
+                !prev.is_ascii_alphanumeric() && prev != b'_'
+            };
+            let right_ok = abs_pos + needle.len() == hay.len() || {
+                let next = hay_bytes[abs_pos + needle.len()];
+                !next.is_ascii_alphanumeric() && next != b'_'
+            };
+            if left_ok && right_ok { return true; }
+        }
+        return false;
+    }
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     for abs_pos in memchr::memmem::find_iter(hay_bytes, needle_bytes) {
         let left_ok = abs_pos == 0 || {
             let prev = hay_bytes[abs_pos - 1];
