@@ -189,53 +189,95 @@ thread_local! {
     static METRICS_ENABLED: std::cell::Cell<bool> = std::cell::Cell::new(false);
     /// Cross-evaluate cache for entity counts keyed by (input_hash, kind, min_count).
     /// Capped at 256 entries to avoid unbounded growth.
-    static ENTITY_COUNT_CACHE: RefCell<FxHashMap<(u64, EntityKind, u32), usize>> = RefCell::new(FxHashMap::default());
+    static ENTITY_COUNT_CACHE: RefCell<FxHashMap<(u64, EntityKind, u32), usize>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for semantic example embeddings keyed by
     /// (text_hash, language, extra_hash).
-    static SEMANTIC_EXAMPLE_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
+    static SEMANTIC_EXAMPLE_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for url_hosts keyed by input_hash.
-    static URL_HOSTS_CACHE: RefCell<FxHashMap<u64, Vec<String>>> = RefCell::new(FxHashMap::default());
+    static URL_HOSTS_CACHE: RefCell<FxHashMap<u64, Vec<String>>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for language detection keyed by input_hash.
-    static LANGUAGE_CACHE: RefCell<FxHashMap<u64, crate::text::Language>> = RefCell::new(FxHashMap::default());
+    static LANGUAGE_CACHE: RefCell<FxHashMap<u64, crate::text::Language>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for has_section keyed by (input_hash, titles_hash).
-    static SECTION_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
+    static SECTION_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for lowercased input and token offsets keyed by input_hash.
     /// Uses Rc to avoid cloning large strings on cache hit.
-    static LOWER_CACHE: RefCell<FxHashMap<u64, (Rc<str>, Rc<[(usize, usize)]>)>> = RefCell::new(FxHashMap::default());
+    static LOWER_CACHE: RefCell<FxHashMap<u64, (Rc<str>, Rc<[(usize, usize)]>)>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for character statistics keyed by input_hash.
-    static CHAR_STATS_CACHE: RefCell<FxHashMap<u64, CharStats>> = RefCell::new(FxHashMap::default());
+    static CHAR_STATS_CACHE: RefCell<FxHashMap<u64, CharStats>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for input shape counts keyed by input_hash.
-    static COUNTS_CACHE: RefCell<FxHashMap<u64, Counts>> = RefCell::new(FxHashMap::default());
+    static COUNTS_CACHE: RefCell<FxHashMap<u64, Counts>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for repeated char run keyed by (input_hash, min_run).
-    static REPEATED_CHAR_RUN_CACHE: RefCell<FxHashMap<(u64, u32), bool>> = RefCell::new(FxHashMap::default());
+    static REPEATED_CHAR_RUN_CACHE: RefCell<FxHashMap<(u64, u32), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for has_mixed_script_token keyed by input_hash.
-    static MIXED_SCRIPT_CACHE: RefCell<FxHashMap<u64, bool>> = RefCell::new(FxHashMap::default());
+    static MIXED_SCRIPT_CACHE: RefCell<FxHashMap<u64, bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for script_is keyed by (input_hash, scripts_hash).
-    static SCRIPT_IS_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new(FxHashMap::default());
+    static SCRIPT_IS_CACHE: RefCell<FxHashMap<(u64, u64), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for token_entropy_above keyed by (input_hash, min_bits_bits, min_token_len).
-    static TOKEN_ENTROPY_CACHE: RefCell<FxHashMap<(u64, u32, u32), bool>> = RefCell::new(FxHashMap::default());
+    static TOKEN_ENTROPY_CACHE: RefCell<FxHashMap<(u64, u32, u32), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for contains_any keyed by (input_hash, needles_hash, case_sensitive).
-    static CONTAINS_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    static CONTAINS_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for contains_all keyed by (input_hash, needles_hash, case_sensitive).
-    static CONTAINS_ALL_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    static CONTAINS_ALL_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for not_contains_any keyed by (input_hash, needles_hash, case_sensitive).
-    static NOT_CONTAINS_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    static NOT_CONTAINS_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for word_contains_any keyed by (input_hash, needles_hash, case_sensitive).
-    static WORD_CONTAINS_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    static WORD_CONTAINS_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for starts_with_any keyed by (input_hash, prefixes_hash, case_sensitive).
-    static STARTS_WITH_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    static STARTS_WITH_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for ends_with_any keyed by (input_hash, suffixes_hash, case_sensitive).
-    static ENDS_WITH_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    static ENDS_WITH_ANY_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for regex keyed by (input_hash, pattern_hash, case_sensitive).
-    static REGEX_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new(FxHashMap::default());
+    static REGEX_CACHE: RefCell<FxHashMap<(u64, u64, bool), bool>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for rule trigger results keyed by (program_ptr, input_hash).
     /// Uses a u64 bitset for ≤64 rules, Vec<bool> fallback for larger programs.
     /// Also stores the pre-computed winner_idx to avoid max_by scan on cache hits.
     /// Stored in Rc to avoid cloning the Vec<bool> on every cache hit.
-    static RULE_TRIGGER_VEC_CACHE: UnsafeCell<FxHashMap<(u64, u64), Rc<CachedTriggerResult>>> = UnsafeCell::new(FxHashMap::default());
+    static RULE_TRIGGER_VEC_CACHE: UnsafeCell<FxHashMap<(u64, u64), Rc<CachedTriggerResult>>> = UnsafeCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
     /// Cross-evaluate cache for semantic input embeddings keyed by
     /// (input_hash, language, extra_hash).
-    static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new(FxHashMap::default());
+    static SEMANTIC_INPUT_CACHE: RefCell<FxHashMap<(u64, crate::text::Language, u64), [f32; 256]>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
 }
 
 #[cold]
@@ -743,7 +785,9 @@ fn regex_cache_key(pattern: &str, case_sensitive: bool) -> u64 {
 }
 
 thread_local! {
-    static GLOBAL_REGEX_CACHE: RefCell<FxHashMap<u64, Option<Regex>>> = RefCell::new(FxHashMap::default());
+    static GLOBAL_REGEX_CACHE: RefCell<FxHashMap<u64, Option<Regex>>> = RefCell::new({
+        let mut m = FxHashMap::default(); m.reserve(128); m
+    });
 }
 
 fn regex_cache() -> RegexCache {

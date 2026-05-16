@@ -12,7 +12,7 @@
   "medical": ["health", "clinical", "therapeutic", "healthcare"],
   "approve": ["approved", "endorse", "endorsed", "authorize", "authorized", "sanction", "accept", "ratify", "greenlight", "consent"],
   "cure": ["heal", "treat", "remedy", "fix", "restore"],
-  "pay": ["payment", "remit", "settle", "compensate", "reimburse", "transfer_funds"],
+  "pay": ["payment", "remit", "settle", "compensate", "transfer_funds"],
   "buy": ["purchase", "acquire", "obtain", "procure", "order"],
   "user": ["customer", "client", "consumer", "subscriber", "member", "buyer", "shopper"],
   "data": ["information", "records", "details", "info"],

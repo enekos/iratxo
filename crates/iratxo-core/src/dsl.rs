@@ -438,7 +438,7 @@ fn lower_predicate(p: DslPredicate) -> Result<Predicate, DslError> {
         }
         for c in &codes {
             if crate::text::Language::from_code(c).is_none() {
-                return Err(DslError::Validation(format!("unsupported language code: {} (use en|es|ca|eu)", c)));
+                return Err(DslError::Validation(format!("unsupported language code: {} (use en|es|ca|eu|fr|it|de|nl)", c)));
             }
         }
         variants.push(Predicate::LanguageIs { codes });

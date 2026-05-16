@@ -24,3 +24,4 @@ harness = false
 [[bench]]
 name = "complex_rules"
 harness = false
+

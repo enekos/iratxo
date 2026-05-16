@@ -2,7 +2,7 @@
   "_comment": "Per-language synonym dictionary (Catalan). Same shape as synonyms.json: canonical -> [synonyms]. The light Catalan stemmer folds diacritics, so canonical/synonym entries can be written with or without diacritics — they collapse to the same stem.",
   "acabar": ["finalitzar", "concloure", "cancellar", "rescindir", "anullar", "donar_de_baixa", "extingir"],
   "contracte": ["acord", "conveni", "pacte", "tracte"],
-  "reembossament": ["devolució", "restitució", "tornada"],
+  "reemborsament": ["devolució", "restitució", "tornada", "reembossament"],
   "garantia": ["assegurament", "garantit", "promesa", "compromís"],
   "política": ["norma", "regla", "directriu", "procediment"],
   "consell": ["recomanació", "assessorament", "orientació", "suggeriment"],

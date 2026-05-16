@@ -22,8 +22,13 @@ pub use ir::{Predicate, Program, Rule, Verdict};
 ///       `HasInvisibleChars`, `HasMixedScriptToken`, `ScriptIs`).
 ///   4 — boxes `Predicate::SemanticMatch` data to shrink `Predicate` enum
 ///       size from ~96 bytes to ~40 bytes, improving cache locality.
+///   5 — adds French, Italian, German, Dutch to `Language` (extends
+///       `LanguageIs` codes with `fr`, `it`, `de`, `nl`). Older blobs that
+///       only reference `en`/`es`/`ca`/`eu` are semantically compatible, but
+///       the bincode discriminant width may differ; engines must agree on
+///       the variant set.
 pub const IR_MAGIC: &[u8; 4] = b"IRTX";
-pub const IR_VERSION: u16 = 4;
+pub const IR_VERSION: u16 = 5;
 
 #[derive(Debug)]
 pub enum DecodeError {

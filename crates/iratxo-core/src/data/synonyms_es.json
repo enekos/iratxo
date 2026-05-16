@@ -3,7 +3,7 @@
 
   "terminar": ["cancelar", "rescindir", "anular", "finalizar", "concluir", "dar_de_baja", "extinguir", "cesar", "abortar"],
   "contrato": ["acuerdo", "convenio", "pacto", "trato", "compromiso"],
-  "reembolso": ["devolucion", "rembolso", "restitucion", "reintegro"],
+  "reembolso": ["devolución", "devolucion", "rembolso", "restitución", "restitucion", "reintegro"],
   "garantia": ["aseguramiento", "garantizado", "promesa", "compromiso_garantia"],
   "politica": ["norma", "regla", "directriz", "procedimiento", "reglamento"],
   "consejo": ["recomendacion", "asesoramiento", "orientacion", "sugerencia"],

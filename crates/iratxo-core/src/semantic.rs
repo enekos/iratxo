@@ -20,6 +20,10 @@ const BUILTIN_SYNONYMS_EN: &str = include_str!("data/synonyms.json");
 const BUILTIN_SYNONYMS_ES: &str = include_str!("data/synonyms_es.json");
 const BUILTIN_SYNONYMS_CA: &str = include_str!("data/synonyms_ca.json");
 const BUILTIN_SYNONYMS_EU: &str = include_str!("data/synonyms_eu.json");
+const BUILTIN_SYNONYMS_FR: &str = include_str!("data/synonyms_fr.json");
+const BUILTIN_SYNONYMS_IT: &str = include_str!("data/synonyms_it.json");
+const BUILTIN_SYNONYMS_DE: &str = include_str!("data/synonyms_de.json");
+const BUILTIN_SYNONYMS_NL: &str = include_str!("data/synonyms_nl.json");
 
 fn builtin_source(lang: Language) -> &'static str {
     match lang {
@@ -27,6 +31,10 @@ fn builtin_source(lang: Language) -> &'static str {
         Language::Spanish => BUILTIN_SYNONYMS_ES,
         Language::Catalan => BUILTIN_SYNONYMS_CA,
         Language::Basque  => BUILTIN_SYNONYMS_EU,
+        Language::French  => BUILTIN_SYNONYMS_FR,
+        Language::Italian => BUILTIN_SYNONYMS_IT,
+        Language::German  => BUILTIN_SYNONYMS_DE,
+        Language::Dutch   => BUILTIN_SYNONYMS_NL,
     }
 }
 
@@ -48,29 +56,62 @@ fn with_builtin<R>(lang: Language, f: impl FnOnce(&SynonymIndex) -> R) -> R {
 
 /// Synonyms collapsed to canonical form, with both keys and values pre-stemmed
 /// for the chosen language so lookups can use stems directly.
+///
+/// A single synonym stem may map to *multiple* canonicals when the
+/// dictionary lists it under several groups (e.g. English "scam" is a
+/// synonym of both "phishing" and "fraud"). The embedding contributes to
+/// every canonical, so polysemy is preserved instead of one canonical
+/// silently winning the alphabetical race.
 pub struct SynonymIndex {
-    map: FxHashMap<String, String>,
+    map: FxHashMap<String, Vec<String>>,
 }
 
 impl SynonymIndex {
+    /// Test-only: peek at the canonical mapping(s) for a stem. Returns an
+    /// empty slice if no entry exists. Used by integration tests to assert
+    /// that synonym dictionaries actually wire up the mappings users expect.
+    #[doc(hidden)]
+    pub fn lookup(&self, stem: &str) -> &[String] {
+        self.map.get(stem).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
     /// Build the index for `lang`. Synonyms and canonical forms are both
     /// stemmed using `lang`'s stemmer.
+    ///
+    /// Behavioral notes:
+    ///   - canonicals are processed in lexical order so identical input
+    ///     always produces the same index (the prior HashMap-driven order
+    ///     was randomized per process by Rust's per-process hash seed).
+    ///   - a synonym stem that appears under multiple canonicals collects
+    ///     all of them instead of the last writer winning; the embedding
+    ///     hashes each one so the token's signal is distributed across all
+    ///     senses.
+    ///   - duplicates inside a single stem's canonical list are dropped.
     pub fn from_json_for(src: &str, lang: Language) -> Self {
         let raw: HashMap<String, serde_json::Value> = serde_json::from_str(src).unwrap_or_default();
-        let mut map = FxHashMap::default();
-        for (canonical, value) in raw {
+        let mut entries: Vec<(String, serde_json::Value)> = raw.into_iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut map: FxHashMap<String, Vec<String>> = FxHashMap::default();
+        for (canonical, value) in entries {
             if canonical.starts_with('_') { continue; }
             let cstem = stem(&canonical, lang);
-            map.insert(cstem.clone(), cstem.clone());
+            Self::push(&mut map, cstem.clone(), cstem.clone());
             if let Some(arr) = value.as_array() {
                 for syn in arr {
                     if let Some(s) = syn.as_str() {
-                        map.insert(stem(s, lang), cstem.clone());
+                        Self::push(&mut map, stem(s, lang), cstem.clone());
                     }
                 }
             }
         }
         SynonymIndex { map }
+    }
+
+    fn push(map: &mut FxHashMap<String, Vec<String>>, key: String, canonical: String) {
+        let bucket = map.entry(key).or_default();
+        if !bucket.iter().any(|c| c == &canonical) {
+            bucket.push(canonical);
+        }
     }
 }
 
@@ -104,25 +145,76 @@ pub fn embed_input_lowered(text: &str, lang: Language, extra: Option<&SynonymInd
     with_builtin(lang, |builtin| embed_lowered(text, lang, extra, builtin))
 }
 
-fn canonicalize_stem<'a>(stem: &'a str, extra: Option<&'a SynonymIndex>, builtin: &'a SynonymIndex) -> &'a str {
+/// Resolve a stem to one-or-more canonicals. `extra` (rule-supplied) is
+/// consulted first; if it has any entry for the stem, those canonicals are
+/// used exclusively. Otherwise the built-in dictionary is consulted. If
+/// neither produces a hit, the input stem is returned as the sole canonical
+/// (so unknown words still produce a hashed bucket).
+fn canonicals_for<'a>(
+    stem: &'a str,
+    extra: Option<&'a SynonymIndex>,
+    builtin: &'a SynonymIndex,
+) -> CanonIter<'a> {
     if let Some(idx) = extra {
-        if let Some(c) = idx.map.get(stem) { return c.as_str(); }
+        let v = idx.lookup(stem);
+        if !v.is_empty() { return CanonIter::Slice(v); }
     }
-    builtin.map.get(stem).map(|s| s.as_str()).unwrap_or(stem)
+    let v = builtin.lookup(stem);
+    if !v.is_empty() { CanonIter::Slice(v) } else { CanonIter::Single(stem) }
+}
+
+enum CanonIter<'a> { Slice(&'a [String]), Single(&'a str) }
+
+impl<'a> Iterator for CanonIter<'a> {
+    type Item = &'a str;
+    fn next(&mut self) -> Option<&'a str> {
+        match self {
+            CanonIter::Slice(s) => {
+                if let Some((first, rest)) = s.split_first() {
+                    *s = rest;
+                    Some(first.as_str())
+                } else { None }
+            }
+            CanonIter::Single(s) => {
+                if s.is_empty() { None } else {
+                    let out = *s; *s = ""; Some(out)
+                }
+            }
+        }
+    }
+}
+
+fn hash_into(v: &mut [f32; DIM], s: &str) {
+    let h = fnv1a64(s.as_bytes());
+    let bucket = (h as usize) % DIM;
+    let sign = if (h >> 32) & 1 == 0 { 1.0 } else { -1.0 };
+    v[bucket] += sign;
+}
+
+/// Per-language input normalization applied before tokenization. Currently
+/// only Catalan needs it: the geminated `l·l` digraph (with U+00B7 MIDDLE
+/// DOT) would otherwise split into two tokens at the dot — losing the word
+/// entirely because the halves don't match the dictionary. Fold to plain
+/// `ll` so `cancel·lar` tokenizes as a single word.
+fn normalize<'a>(text: &'a str, lang: Language) -> Cow<'a, str> {
+    if lang == Language::Catalan && (text.contains('·') || text.contains("L·L")) {
+        Cow::Owned(text.replace('·', ""))
+    } else {
+        Cow::Borrowed(text)
+    }
 }
 
 fn embed(text: &str, lang: Language, extra: Option<&SynonymIndex>, builtin: &SynonymIndex) -> [f32; DIM] {
     let mut v = [0f32; DIM];
-    for tok in tokenize_iter(text) {
+    let text = normalize(text, lang);
+    for tok in tokenize_iter(&text) {
         let lower = tok.to_lowercase();
         if is_stopword(&lower, lang) { continue; }
         let stemmed = stem_cow(&lower, lang);
         if stemmed.chars().count() < 2 { continue; }
-        let canonical = canonicalize_stem(&*stemmed, extra, builtin);
-        let h = fnv1a64(canonical.as_bytes());
-        let bucket = (h as usize) % DIM;
-        let sign = if (h >> 32) & 1 == 0 { 1.0 } else { -1.0 };
-        v[bucket] += sign;
+        for canonical in canonicals_for(&stemmed, extra, builtin) {
+            hash_into(&mut v, canonical);
+        }
     }
     v
 }
@@ -135,6 +227,8 @@ const MAX_STOPWORD_LEN: usize = 12;
 
 fn embed_lowered(text: &str, lang: Language, extra: Option<&SynonymIndex>, builtin: &SynonymIndex) -> [f32; DIM] {
     let mut v = [0f32; DIM];
+    let text = normalize(text, lang);
+    let text = text.as_ref();
     for tok in tokenize_iter(text) {
         // Fast path: long tokens are never stopwords, skip binary search.
         if tok.len() <= MAX_STOPWORD_LEN && is_stopword(tok, lang) { continue; }
@@ -142,11 +236,9 @@ fn embed_lowered(text: &str, lang: Language, extra: Option<&SynonymIndex>, built
         // Fast path for ASCII: len() is much faster than chars().count().
         let len = if stemmed.is_ascii() { stemmed.len() } else { stemmed.chars().count() };
         if len < 2 { continue; }
-        let canonical = canonicalize_stem(&*stemmed, extra, builtin);
-        let h = fnv1a64(canonical.as_bytes());
-        let bucket = (h as usize) % DIM;
-        let sign = if (h >> 32) & 1 == 0 { 1.0 } else { -1.0 };
-        v[bucket] += sign;
+        for canonical in canonicals_for(&stemmed, extra, builtin) {
+            hash_into(&mut v, canonical);
+        }
     }
     v
 }
@@ -207,6 +299,30 @@ mod tests {
     fn basque_inflections_collapse() {
         // "museoak" → "museo", "museoan" → "museo" via Basque stemmer.
         let s = similarity_lang("museoak handiak", "museoan nago", Language::Basque, None);
+        assert!(s > 0.4, "got {}", s);
+    }
+
+    #[test]
+    fn french_synonyms_score_high() {
+        let s = similarity_lang("je veux annuler mon contrat", "résilier l'accord", Language::French, None);
+        assert!(s > 0.4, "got {}", s);
+    }
+
+    #[test]
+    fn italian_synonyms_score_high() {
+        let s = similarity_lang("voglio cancellare il contratto", "annullare l'accordo", Language::Italian, None);
+        assert!(s > 0.4, "got {}", s);
+    }
+
+    #[test]
+    fn german_synonyms_score_high() {
+        let s = similarity_lang("ich möchte den vertrag kündigen", "die vereinbarung beenden", Language::German, None);
+        assert!(s > 0.4, "got {}", s);
+    }
+
+    #[test]
+    fn dutch_synonyms_score_high() {
+        let s = similarity_lang("ik wil het contract opzeggen", "de overeenkomst annuleren", Language::Dutch, None);
         assert!(s > 0.4, "got {}", s);
     }
 
