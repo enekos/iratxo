@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/iratxo-core", "crates/iratxo-cli"]
+members = ["crates/iratxo-core", "crates/iratxo-cli", "crates/iratxo-bench-runner"]
 # iratxo-engine has a wasm-only target and is built with --target wasm32-unknown-unknown
 # so it's intentionally excluded from default workspace builds.
 exclude = ["crates/iratxo-engine", "fuzz"]
