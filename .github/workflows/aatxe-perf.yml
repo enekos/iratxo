@@ -1,0 +1,30 @@
+name: aatxe-perf
+
+# Statistical microbenchmark regression gate, driven by the aatxe reusable
+# workflow at https://github.com/enekos/aatxe. On every PR, runs the
+# iratxo-bench-runner binary on HEAD and on the PR base, compares medians
+# with Mann-Whitney U significance, posts a sticky comment, and fails the
+# lane if any bench regressed past the threshold.
+#
+# Pinned to the fix-reusable-workflow-crossrepo branch until enekos/aatxe#6
+# lands; flip to @main after the merge.
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  perf:
+    uses: enekos/aatxe/.github/workflows/aatxe.yml@fix-reusable-workflow-crossrepo
+    with:
+      lang: rust
+      service: iratxo-core
+      runner-cmd: "cargo run --release -p iratxo-bench-runner -q --bin iratxo-aatxe-runner"
+    permissions:
+      contents: read
+      pull-requests: write
