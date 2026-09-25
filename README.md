@@ -16,6 +16,18 @@ Executable language rules as Wasm plugins. Author rules in YAML, compile to a po
 - `landing/` — Svelte 5 marketing + documentation site with an embedded live playground and 11 worked rule packs (compliance, legal, agent guardrails, support triage, UGC moderation, PII screen, multilingual, PR linter, phishing email, HIPAA PHI, secret scan). `cd landing && npm install && npm run dev`.
 - `examples/` — compliance, legal/termination, phishing, HIPAA PHI, secret-scan domain packs, with golden-file test cases.
 
+## Install
+
+Prebuilt `iratxo` binaries are attached to every [release](https://github.com/enekos/iratxo/releases) for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` and `aarch64-apple-darwin`, each with a `.sha256` next to it. Pushing a `v*` tag builds and publishes them (`.github/workflows/release.yml`).
+
+```
+VERSION=v0.1.0
+TARGET=x86_64-unknown-linux-gnu
+curl -fsSL "https://github.com/enekos/iratxo/releases/download/$VERSION/iratxo-$VERSION-$TARGET.tar.gz" \
+  | tar -xz --strip-components=1 -C ~/.local/bin "iratxo-$VERSION-$TARGET/iratxo"
+iratxo --version
+```
+
 ## Build
 
 ```
